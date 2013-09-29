@@ -14,13 +14,13 @@
 
 import Control.Applicative ((<$>))
 import Control.Monad (when)
-import System.IO
-import System.Directory
-import System.Process
-import System.Environment
-import Data.Digest.Pure.MD5
-import Data.List
-import qualified Data.ByteString.Lazy.Char8 as B
+import System.IO (hFlush,hSetEcho,stdin,stdout)
+import System.Directory (getHomeDirectory,removeFile)
+import System.Process (system)
+import System.Environment (getArgs)
+import Data.Digest.Pure.MD5 (md5)
+import Data.List (find)
+import qualified Data.ByteString.Lazy.Char8 as B (ByteString,pack)
 
 -- --------------------------------------------------------------------------
 -- PassPair type
@@ -51,7 +51,8 @@ parse_args args
     | null args = error "Usage: OPTION NAME/NEW PASSWORD"
     | head args == "-r" = recall_params (length args) args
     | head args == "-s" = set_params (length args) args
-    | head args == "-m"  = master_params (length args) args
+    | head args == "-m" = master_params (length args) args
+    | head args == "-i" = init_params (length args) args
     | head args == "-h" || head args == "--help" = help_msg
     | otherwise = error "invalid command"
 
@@ -166,6 +167,17 @@ master_params ln args
         set_master (args ++ [pass])
     | otherwise = set_master args
 
+init_params :: Int -> [String] -> IO ()
+init_params ln args
+    | ln == 1 = do
+        putStr "New Master: "
+        hFlush stdout
+        hSetEcho stdin False
+        new <- getLine
+        hSetEcho stdin True
+        init_master (reverse $ new:args)
+    | otherwise = set_master args
+
 
 -- |Prints the help dialogue.
 help_msg :: IO ()
@@ -173,6 +185,7 @@ help_msg = putStrLn $ "Commands:\n"
            ++ "  -r <name> <master> - recalls the password of <name>.\n"
            ++ "  -s <name> <seed> <master> - changes the seed for <name>.\n"
            ++ "  -m <new_master> <master> - changes the master password.\n"
+           ++ "  -i <new_master> - initializes a new master password.\n"
            ++ "  -h - prints this message."
 
 -- --------------------------------------------------------------------------
@@ -210,5 +223,13 @@ set_master args = do
     master_hash <- io_master_hash >>= readFile
     let pass = args!!2
     when (not $ valid_pass pass master_hash) $ error "Incorrect password"
+    removeFile hash_file
+    appendFile hash_file (show $ md5 (B.pack pass))
+
+
+init_master :: [String] -> IO ()
+init_master args = do
+    hash_file   <- io_master_hash
+    let pass = args!!2
     removeFile hash_file
     appendFile hash_file (show $ md5 (B.pack pass))
