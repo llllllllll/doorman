@@ -23,7 +23,6 @@ import System.Environment (getArgs)
 import System.IO (hFlush,hSetEcho,stdin,stdout)
 import System.Process (system)
 
-
 -- --------------------------------------------------------------------------
 -- PassPair type
 
@@ -35,24 +34,26 @@ type PassPair = (String,B.ByteString)
 
 -- |Password library that stores passwords to be processed to return the final
 -- returnable password.
-io_pass_lib :: IO FilePath
-io_pass_lib = getHomeDirectory >>= (\h -> return (h ++ "/.doorman/pass_lib"))
+pass_lib :: FilePath
+pass_lib = "/usr/share/doorman/pass_lib"
 
--- |The config file.
-io_master_hash :: IO FilePath
-io_master_hash = getHomeDirectory >>= (\h -> return (h ++ "/.doorman/master"))
+-- |The file holding the hash of the master password."
+hash_fl :: FilePath
+hash_fl = "/usr/share/doorman/master"
+
+-- |The hash of the master password.
+io_master_hash :: IO String
+io_master_hash = readFile hash_fl
 
 -- --------------------------------------------------------------------------
 -- Main / test cases.
 main :: IO ()
-main = do
-    parse_args =<< getArgs
+main = parse_args =<< getArgs
 
 parse_args :: [String] -> IO ()
 parse_args args
     | null args = error "Usage: OPTION NAME/NEW PASSWORD"
-    | head args == "-r" = recall_params True  (length args) args
-    | head args == "-p" = recall_params False (length args) args
+    | head args == "-r" = recall_params (length args) args
     | head args == "-s" = set_params (length args) args
     | head args == "-m" = master_params (length args) args
     | head args == "-i" = init_params (length args) args
@@ -94,8 +95,8 @@ mk_pass master seed = let p1 = show $ md5 (B.pack (master ++ seed))
 -- These function check for the proper params to then pass on the their
 -- respective functions.
 
-recall_params :: Bool -> Int -> [String] -> IO ()
-recall_params p ln args
+recall_params ::Int -> [String] -> IO ()
+recall_params ln args
     | ln == 1 = do
         putStr "Password Name: "
         hFlush stdout
@@ -106,9 +107,7 @@ recall_params p ln args
         pass <- getLine
         hSetEcho stdin True
         putStrLn ""
-        if p
-          then recall_pass  (reverse $ pass:name:args)
-          else recall_pass' (reverse $ pass:name:args)
+        recall_pass  (reverse $ pass:name:args)
     | ln == 2 = do
         putStr "Master Password: "
         hFlush stdout
@@ -116,12 +115,8 @@ recall_params p ln args
         pass <- getLine
         hSetEcho stdin True
         putStrLn ""
-        if p
-          then recall_pass  (args ++ [pass])
-          else recall_pass' (args ++ [pass])
-    | otherwise = if p
-                    then recall_pass  args
-                    else recall_pass' args
+        recall_pass  (args ++ [pass])
+    | otherwise = recall_pass  args
 
 set_params :: Int -> [String] -> IO ()
 set_params ln args
@@ -189,14 +184,13 @@ init_params ln args
         new <- getLine
         hSetEcho stdin True
         init_master (reverse $ new:args)
-    | otherwise = set_master args
+    | otherwise = init_master args
 
 
 -- |Prints the help dialogue.
 help_msg :: IO ()
 help_msg = putStrLn $ "Commands:\n"
            ++ "  -r <name> <master> - recalls the password of <name>.\n"
-           ++ "  -p <name> <master> - prints the password of <name>.\n"
            ++ "  -s <name> <seed> <master> - changes the seed for <name>.\n"
            ++ "  -m <new_master> <master> - changes the master password.\n"
            ++ "  -i <new_master> - initializes a new master password.\n"
@@ -208,8 +202,7 @@ help_msg = putStrLn $ "Commands:\n"
 -- |Pushes the password requested to the clipboard
 recall_pass :: [String] -> IO ()
 recall_pass args = do
-    master_hash <- io_master_hash >>= readFile
-    pass_lib    <- io_pass_lib
+    master_hash <- io_master_hash
     fl          <- readFile pass_lib
     let pass = args!!2
     when (not $ valid_pass pass master_hash) $ error "Incorrect password"
@@ -218,23 +211,10 @@ recall_pass args = do
         Just p  -> (system $ "echo \"" ++ mk_pass pass (get_seed p)
                     ++ "\" | xclip -selection c") >> return ()
 
--- |Prints the password requested to stdout.
-recall_pass' :: [String] -> IO ()
-recall_pass' args = do
-    master_hash <- io_master_hash >>= readFile
-    pass_lib    <- io_pass_lib
-    fl          <- readFile pass_lib
-    let pass = args!!2
-    when (not $ valid_pass pass master_hash) $ error "Incorrect password"
-    case get_pair (args!!1) (parse_pairs fl) of
-        Nothing -> error "No password set for that name"
-        Just p  -> putStrLn $ mk_pass pass (get_seed p)
-
 -- |Sets a password seed for a name.
 set_pass :: [String] -> IO ()
 set_pass args = do
-    master_hash <- io_master_hash >>= readFile
-    pass_lib    <- io_pass_lib
+    master_hash <- io_master_hash
     fl          <- unlines . (filter (\l -> takeWhile (/= ':') l /= args!!1)) .
                     lines <$> readFile pass_lib
     let pass = args!!3
@@ -249,13 +229,10 @@ set_master args = do
     master_hash <- io_master_hash >>= readFile
     let pass = args!!2
     when (not $ valid_pass pass master_hash) $ error "Incorrect password"
-    removeFile hash_file
-    appendFile hash_file (show $ md5 (B.pack pass))
+    removeFile hash_fl
+    appendFile hash_fl (show $ md5 (B.pack pass))
 
 -- |Allows the user to set a first master password
 init_master :: [String] -> IO ()
-init_master args = do
-    hash_file   <- io_master_hash
-    let pass = args!!2
-    removeFile hash_file
-    appendFile hash_file (show $ md5 (B.pack pass))
+init_master args = let pass = args!!1
+                   in appendFile hash_fl (show $ md5 (B.pack pass))

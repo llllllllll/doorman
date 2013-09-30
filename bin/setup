@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# Joe Jevnik
+# 29.9.2013
+# Sets up the system to be able to use doorman.
+# Requires root priveleges. - Usage: # ./setup
+
+echo "Adding doorman user..."
+useradd -s /usr/bin/false doorman
+
+echo "Setting up files and directories..."
+if [ ! -d /usr/share/doorman ];then
+    mkdir /usr/share/doorman
+fi
+
+chown doorman /usr/share/doorman
+rm  /usr/share/doorman/*
+
+touch /usr/share/doorman/pass_lib
+chown doorman /usr/share/doorman/pass_lib
+chmod 600 /usr/share/doorman/pass_lib
+
+touch /usr/share/doorman/master
+chown doorman /usr/share/doorman/master
+chmod 600 /usr/share/doorman/master
+
+echo "Setting up your doorman master password..."
+doorman -i
+echo "You may user \$ doorman -m <new> <old> to change the master password."
