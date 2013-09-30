@@ -14,7 +14,7 @@
 
 import Control.Applicative ((<$>))
 import Control.Monad (when)
-import Data.Char
+import Data.Char (chr,ord)
 import Data.Digest.Pure.MD5 (md5)
 import Data.List (find)
 import qualified Data.ByteString.Lazy.Char8 as B (ByteString,pack)
@@ -46,9 +46,6 @@ hash_fl = "/usr/share/doorman/master"
 -- |The hash of the master password.
 io_master_hash :: IO String
 io_master_hash = readFile hash_fl
-
-
-
 
 -- --------------------------------------------------------------------------
 -- Main / test cases.
@@ -93,7 +90,6 @@ mk_pass master seed = let p1 = show $ md5 (B.pack (master ++ seed))
                       in filter (`notElem` "\"'`")
                              $ scanl1 (\x y -> chr
                                        $ ((ord x * ord y) `rem` 93) + 33) p1
-
 
 -- --------------------------------------------------------------------------
 -- Functions that will be called from parse_args directly
