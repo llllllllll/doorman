@@ -24,11 +24,11 @@ touch /usr/share/doorman/master
 chown doorman /usr/share/doorman/master
 chmod 600 /usr/share/doorman/master
 
-chown doorman doorman
-chmod +s doorman
 cp doorman /usr/bin/doorman
+chown doorman /usr/bin/doorman
+chmod +s /usr/bin/doorman
 
 echo "Setting up your doorman master password..."
 echo "New Master Password: " & read -s pass
-doorman -i $pass >> /usr/share/doorman/master
+doorman -i $pass > /usr/share/doorman/master
 echo "You may user \$ doorman -m <new> <old> to change the master password."

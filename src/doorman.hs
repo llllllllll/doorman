@@ -240,4 +240,4 @@ set_master args = do
 -- |Allows the user to set a first master password.
 init_master :: [String] -> IO ()
 init_master args = let pass = args!!1
-                   in putStrLn (show $ md5 (B.pack pass))
+                   in putStr (show $ md5 (B.pack pass))
