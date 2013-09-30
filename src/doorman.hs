@@ -22,6 +22,8 @@ import System.Directory (getHomeDirectory,removeFile)
 import System.Environment (getArgs)
 import System.IO (hFlush,hSetEcho,stdin,stdout)
 import System.Process (system)
+import System.Posix.User (setEffectiveUserID)
+
 
 -- --------------------------------------------------------------------------
 -- PassPair type
@@ -45,6 +47,9 @@ hash_fl = "/usr/share/doorman/master"
 io_master_hash :: IO String
 io_master_hash = readFile hash_fl
 
+
+
+
 -- --------------------------------------------------------------------------
 -- Main / test cases.
 main :: IO ()
@@ -52,7 +57,7 @@ main = parse_args =<< getArgs
 
 parse_args :: [String] -> IO ()
 parse_args args
-    | null args = error "Usage: OPTION NAME/NEW PASSWORD"
+    | null args = error "Usage: [OPTION] [PARAMS]"
     | head args == "-r" = recall_params (length args) args
     | head args == "-s" = set_params (length args) args
     | head args == "-m" = master_params (length args) args
@@ -190,10 +195,10 @@ init_params ln args
 -- |Prints the help dialogue.
 help_msg :: IO ()
 help_msg = putStrLn $ "Commands:\n"
-           ++ "  -r <name> <master> - recalls the password of <name>.\n"
-           ++ "  -s <name> <seed> <master> - changes the seed for <name>.\n"
-           ++ "  -m <new_master> <master> - changes the master password.\n"
-           ++ "  -i <new_master> - initializes a new master password.\n"
+           ++ "  -r [NAME] [MASTER] - recalls the password of NAME.\n"
+           ++ "  -s [NAME] [SEED] [MASTER] - changes the seed for NAME.\n"
+           ++ "  -m [NEWMASTER] [OLDMASTER] - changes the master password.\n"
+           ++ "  -i [INPUT] - hashes INPUT, used when making a first master.\n"
            ++ "  -h - prints this message."
 
 -- --------------------------------------------------------------------------
@@ -232,7 +237,7 @@ set_master args = do
     removeFile hash_fl
     appendFile hash_fl (show $ md5 (B.pack pass))
 
--- |Allows the user to set a first master password
+-- |Allows the user to set a first master password.
 init_master :: [String] -> IO ()
 init_master args = let pass = args!!1
-                   in appendFile hash_fl (show $ md5 (B.pack pass))
+                   in putStrLn (show $ md5 (B.pack pass))
