@@ -5,33 +5,105 @@
 # Sets up the system to be able to use doorman.
 # Requires root priveleges. - Usage: # ./setup
 
-echo "Adding doorman user..."
-useradd -s /usr/bin/false doorman
-
-echo "Setting up files and directories..."
-if [ ! -d /usr/share/doorman ];then
-    mkdir /usr/share/doorman
+if [ $# -eq 0 ]; then
+    echo Usage: "# ./setup install"
+    exit
 fi
 
-echo "Purging any pre-exisiting files..."
-rm  /usr/share/doorman/*
+if [ $USER != "root" ];then
+    echo "setup must run as root."
+    exit
+fi
 
-echo "Setting up permissions..."
-chown doorman /usr/share/doorman
+if [ "$1" = "install" ];then
+    echo "Installing doorman..."
+    echo "Adding doorman user..."
+    useradd -s /usr/bin/false doorman
+    echo "Setting up files and directories..."
+    
+    if [ ! -d /usr/share/doorman ];then
+	mkdir /usr/share/doorman
+    fi
 
-touch /usr/share/doorman/pass_lib
-chown doorman /usr/share/doorman/pass_lib
-chmod 600 /usr/share/doorman/pass_lib
+    if [ -f /usr/share/doorman/master ];then
+	echo "An existing master password hash was found, would you like to"
+	echo "recover this master password (Y/n):"
+	read res
+	if [ "$res" = "n" ] || [ "$res" = "N" ];then
+	    rm /usr/share/doorman/master
+	    touch /usr/share/doorman/master
+	    echo "Setting up your doorman master password..."
+	    echo "New Master Password: "; read -s passa
+	    echo "Retype Master Password: ";read -s passb
+	    until [ $passa = $passb ];do
+		echo "PASSWORDS DO NOT MATCH!"
+		echo "New Master Password: "; read -s passa
+		echo "Retype Master Password: ";read -s passb
+	    done
+	fi
+    else
+	touch /usr/share/doorman/master
+        echo "Setting up your doorman master password..."
+	echo "New Master Password: "; read -s passa
+	echo "Retype Master Password: ";read -s passb
+	until [ $passa = $passb ];do
+	    echo "PASSWORDS DO NOT MATCH!"
+	    echo "New Master Password: "; read -s passa
+	    echo "Retype Master Password: ";read -s passb
+	done
+    fi
+    
+    if [ -f /usr/share/doorman/pass_lib ];then
+	echo "An existing set of password seeds was found, would you like to"
+	echo "recover these password seeds (Y/n):"
+	read res
+	if [ "$res" = "n" ] || [ "$res" = "N" ];then
+	    rm /usr/share/doorman/pass_lib
+	    touch /usr/share/doorman/pass_lib
+	fi
+    else
+	touch /usr/share/doorman/pass_lib
+    fi
 
-touch /usr/share/doorman/master
-chown doorman /usr/share/doorman/master
-chmod 600 /usr/share/doorman/master
+    echo "Setting up permissions..."
+    chown -R doorman /usr/share/doorman
+    chmod 600 /usr/share/doorman/pass_lib
+    chmod 600 /usr/share/doorman/master
+    cp doorman /usr/bin/doorman
+    chown doorman /usr/bin/doorman
+    chmod +s /usr/bin/doorman
+    
+    doorman -i $passa > /usr/share/doorman/master
+    echo "You may user \$ doorman -m <new> <old> to change the"
+    echo "master password."
 
-cp doorman /usr/bin/doorman
-chown doorman /usr/bin/doorman
-chmod +s /usr/bin/doorman
-
-echo "Setting up your doorman master password..."
-echo "New Master Password: " & read -s pass
-doorman -i $pass > /usr/share/doorman/master
-echo "You may user \$ doorman -m <new> <old> to change the master password."
+    echo "Instalation complete!"
+    
+    else 
+    if [ "$1" = "uninstall" ];then
+	echo "Uninstalling doorman..."
+	echo "removing binaries..."
+	
+        rm /usr/bin/doorman
+	
+	echo "Removing doorman user..."
+        userdel doorman
+        echo "Would you like to remove the master hash and password seeds? (y/N):"
+        echo "If you choose to save them, ownership will be transfered to root."
+        echo "WARNING: after these are removed the passwords will be unrecoverable."
+	
+        read res;
+        if [ "$res" = "y" ] || [ "$res" = "Y" ];then
+	    rm -r /usr/share/doorman
+	
+	    else
+	    chown -R root /usr/share/doorman
+        fi
+	echo "Removal complete!"
+	
+        else
+        echo "Invalid command: $1: please input 'install' or 'uninstall'"
+    fi
+fi
+	
+    
