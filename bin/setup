@@ -13,8 +13,11 @@ if [ ! -d /usr/share/doorman ];then
     mkdir /usr/share/doorman
 fi
 
-chown doorman /usr/share/doorman
+echo "Purging any pre-exisiting files..."
 rm  /usr/share/doorman/*
+
+echo "Setting up permissions..."
+chown doorman /usr/share/doorman
 
 touch /usr/share/doorman/pass_lib
 chown doorman /usr/share/doorman/pass_lib

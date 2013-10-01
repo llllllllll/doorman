@@ -76,15 +76,22 @@ Usage:
 
 Commands:
 
-- `-r [NAME] [MASTER]` - recalls the password of NAME.
+- `-r [NAME] [MASTER]` - recalls the password of NAME, pushing it to the
+clipboard.
+
+- `-p [NAME] [MASTER]` - recalls the password of NAME, printing it to stdout.
 
 - `-s [NAME] [SEED] [MASTER]` - changes the seed for NAME.
 
 - `-m [NEWMASTER] [OLDMASTER]` - changes the master password.
 
-- `-i [INPUT]` - hashes INPUT, used when making a first master password.
+- `-h [INPUT]` - hashes INPUT (but does not do full password processing, only 
+md5) and prints it WITH a new line.
 
--  `-h` - prints the help message.
+- `-i [INPUT]` - hashes INPUT (but does not do full password processing, only 
+md5) and prints it WITHOUT a new line. This is used in the initialization step.
+
+-  `-H or --help` - prints the help message.
 
 If the user provides a flag, but not enough arguments, then the program will
 request the missing arguments from stdin. When typing in the master password,
@@ -119,7 +126,7 @@ clipboard.
 This would be the same as the first, only having prompted for the missing
 arguments to be fed from stdin.
 
-    $ doorman -i hashthis
+    $ doorman -h hashthis
 	000242dc7a5257e1f265578cdcc6c3fd
 	$
 

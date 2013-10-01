@@ -1,6 +1,5 @@
 -----------------------------------------------------------------------------
 -- |
--- Module      :  doorman
 -- Copyright   :  Joe Jevnik 28.9.2013
 -- License     :  GPL v2
 --
@@ -22,8 +21,6 @@ import System.Directory (getHomeDirectory,removeFile)
 import System.Environment (getArgs)
 import System.IO (hFlush,hSetEcho,stdin,stdout)
 import System.Process (system)
-import System.Posix.User (setEffectiveUserID)
-
 
 -- --------------------------------------------------------------------------
 -- PassPair type
@@ -55,11 +52,13 @@ main = parse_args =<< getArgs
 parse_args :: [String] -> IO ()
 parse_args args
     | null args = error "Usage: [OPTION] [PARAMS]"
-    | head args == "-r" = recall_params (length args) args
+    | head args == "-r" = recall_params (length args) args False
+    | head args == "-p" = recall_params (length args) args True
     | head args == "-s" = set_params (length args) args
     | head args == "-m" = master_params (length args) args
-    | head args == "-i" = init_params (length args) args
-    | head args == "-h" || head args == "--help" = help_msg
+    | head args == "-i" = init_params (length args) args False
+    | head args == "-h" = init_params (length args) args True
+    | head args == "-H" || head args == "--help" = help_msg
     | otherwise = error "invalid command"
 
 -- --------------------------------------------------------------------------
@@ -96,8 +95,9 @@ mk_pass master seed = let p1 = show $ md5 (B.pack (master ++ seed))
 -- These function check for the proper params to then pass on the their
 -- respective functions.
 
-recall_params ::Int -> [String] -> IO ()
-recall_params ln args
+-- |Accumulates all parameters for '-r' and '-p'.
+recall_params ::Int -> [String] -> Bool -> IO ()
+recall_params ln args b
     | ln == 1 = do
         putStr "Password Name: "
         hFlush stdout
@@ -108,7 +108,7 @@ recall_params ln args
         pass <- getLine
         hSetEcho stdin True
         putStrLn ""
-        recall_pass  (reverse $ pass:name:args)
+        recall_pass (reverse $ pass:name:args) b
     | ln == 2 = do
         putStr "Master Password: "
         hFlush stdout
@@ -116,9 +116,10 @@ recall_params ln args
         pass <- getLine
         hSetEcho stdin True
         putStrLn ""
-        recall_pass  (args ++ [pass])
-    | otherwise = recall_pass  args
+        recall_pass  (args ++ [pass]) b
+    | otherwise = recall_pass args b
 
+-- |Accumulates all parameters for '-s'.
 set_params :: Int -> [String] -> IO ()
 set_params ln args
     | ln == 1 = do
@@ -155,7 +156,7 @@ set_params ln args
         set_pass (args ++ [pass])
     | otherwise = set_pass args
 
-
+-- |Accumulates all parameters for '-m'.
 master_params :: Int -> [String] -> IO ()
 master_params ln args
     | ln == 1 = do
@@ -176,54 +177,59 @@ master_params ln args
         set_master (args ++ [pass])
     | otherwise = set_master args
 
-init_params :: Int -> [String] -> IO ()
-init_params ln args
+-- |Accumulates all params for '-i' and '-h'.
+init_params :: Int -> [String] -> Bool -> IO ()
+init_params ln args b
     | ln == 1 = do
-        putStr "New Master: "
+        putStr "Input: "
         hFlush stdout
-        hSetEcho stdin False
         new <- getLine
-        hSetEcho stdin True
-        init_master (reverse $ new:args)
-    | otherwise = init_master args
-
+        init_master (reverse $ new:args) b
+    | otherwise = init_master args b
 
 -- |Prints the help dialogue.
 help_msg :: IO ()
 help_msg = putStrLn $ "Commands:\n"
-           ++ "  -r [NAME] [MASTER] - recalls the password of NAME.\n"
+           ++ "  -r [NAME] [MASTER] - copies the password of NAME.\n"
+           ++ "  -p [NAME] [MASTER] - prints the password of NAME.\n"
            ++ "  -s [NAME] [SEED] [MASTER] - changes the seed for NAME.\n"
            ++ "  -m [NEWMASTER] [OLDMASTER] - changes the master password.\n"
+           ++ "  -h [INPUT] - hashes INPUT and prints to a new line.\n"
            ++ "  -i [INPUT] - hashes INPUT, used when making a first master.\n"
-           ++ "  -h - prints this message."
+           ++ "  -H --help - prints this message."
 
 -- --------------------------------------------------------------------------
 -- Functions that will be called after *_params has checked that it is safe
 
--- |Pushes the password requested to the clipboard
-recall_pass :: [String] -> IO ()
-recall_pass args = do
+-- |Recalls the given password. if b is True, then prints the password to
+-- stdout. If b is False, pushes the password to the clipboard. This function
+-- handles both '-r' and '-p'.
+recall_pass :: [String] -> Bool -> IO ()
+recall_pass args b = do
     master_hash <- io_master_hash
     fl          <- readFile pass_lib
     let pass = args!!2
     when (not $ valid_pass pass master_hash) $ error "Incorrect password"
     case get_pair (args!!1) (parse_pairs fl) of
         Nothing -> error "No password set for that name"
-        Just p  -> (system $ "echo \"" ++ mk_pass pass (get_seed p)
-                    ++ "\" | xclip -selection c") >> return ()
+        Just p  -> case b of
+                       False -> (system $ "echo \"" ++ mk_pass pass (get_seed p)
+                                 ++ "\" | xclip -selection c") >> return ()
+                       True  -> putStrLn (mk_pass pass (get_seed p))
 
--- |Sets a password seed for a name.
+-- |Sets a password seed for a name. This function handles '-s'.
 set_pass :: [String] -> IO ()
 set_pass args = do
     master_hash <- io_master_hash
     fl          <- unlines . (filter (\l -> takeWhile (/= ':') l /= args!!1)) .
-                    lines <$> readFile pass_lib
+                   lines <$> readFile pass_lib
     let pass = args!!3
     when (not $ valid_pass pass master_hash) $ error "Incorrect password"
     removeFile pass_lib
     appendFile pass_lib (fl ++ args!!1 ++ ":" ++ args !!2)
 
 -- |Allows the user to change their master password.
+-- This function handles '-m'.
 set_master :: [String] -> IO ()
 set_master args = do
     hash_file   <- io_master_hash
@@ -233,7 +239,10 @@ set_master args = do
     removeFile hash_fl
     appendFile hash_fl (show $ md5 (B.pack pass))
 
--- |Allows the user to set a first master password.
-init_master :: [String] -> IO ()
-init_master args = let pass = args!!1
-                   in putStr (show $ md5 (B.pack pass))
+-- |Allows the user to set a first master password. This function handles '-i'
+-- and '-h'.
+init_master :: [String] -> Bool -> IO ()
+init_master args b = let pass = args!!1
+                     in case b of
+                            True  -> putStrLn (show $ md5 (B.pack pass))
+                            False -> putStr   (show $ md5 (B.pack pass))
