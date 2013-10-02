@@ -72,14 +72,13 @@ parse_pairs str = map (\l -> ( takeWhile (/= ':') l
                              )) $ lines str
 
 get_pair :: String -> [PassPair] -> Maybe PassPair
-get_pair name ps = find (\p -> fst p == name) ps
+get_pair name = find (\p -> fst p == name)
 
 get_seed :: PassPair -> String
 get_seed = show . snd
 
 -- |Compares the hash of the input password to the saved hash of the master
 -- password.
-
 valid_pass :: String -> String -> Bool
 valid_pass pre_hash post_hash = show (md5 (B.pack pre_hash)) == post_hash
 
@@ -209,13 +208,13 @@ recall_pass args b = do
     master_hash <- io_master_hash
     fl          <- readFile pass_lib
     let pass = args!!2
-    when (not $ valid_pass pass master_hash) $ error "Incorrect password"
+    unless (valid_pass pass master_hash) $ error "Incorrect password"
     case get_pair (args!!1) (parse_pairs fl) of
         Nothing -> error "No password set for that name"
-        Just p  -> case b of
-                       False -> (system $ "echo \"" ++ mk_pass pass (get_seed p)
-                                 ++ "\" | xclip -selection c") >> return ()
-                       True  -> putStrLn (mk_pass pass (get_seed p))
+        Just p  -> if b
+                     then void (system $ "echo \"" ++ mk_pass pass (get_seed p)
+                                           ++ "\" | xclip -selection c")
+                     else putStrLn (mk_pass pass (get_seed p))
 
 -- |Sets a password seed for a name. This function handles '-s'.
 set_pass :: [String] -> IO ()
@@ -224,7 +223,7 @@ set_pass args = do
     fl          <- unlines . (filter (\l -> takeWhile (/= ':') l /= args!!1)) .
                    lines <$> readFile pass_lib
     let pass = args!!3
-    when (not $ valid_pass pass master_hash) $ error "Incorrect password"
+    unless (valid_pass pass master_hash) $ error "Incorrect password"
     removeFile pass_lib
     appendFile pass_lib (fl ++ args!!1 ++ ":" ++ args !!2)
 
@@ -235,7 +234,7 @@ set_master args = do
     hash_file   <- io_master_hash
     master_hash <- io_master_hash >>= readFile
     let pass = args!!2
-    when (not $ valid_pass pass master_hash) $ error "Incorrect password"
+    unless (valid_pass pass master_hash) $ error "Incorrect password"
     removeFile hash_fl
     appendFile hash_fl (show $ md5 (B.pack pass))
 
@@ -243,6 +242,6 @@ set_master args = do
 -- and '-h'.
 init_master :: [String] -> Bool -> IO ()
 init_master args b = let pass = args!!1
-                     in case b of
-                            True  -> putStrLn (show $ md5 (B.pack pass))
-                            False -> putStr   (show $ md5 (B.pack pass))
+                     in if b
+                        then putStrLn (show $ md5 (B.pack pass))
+                        else putStr   (show $ md5 (B.pack pass))
