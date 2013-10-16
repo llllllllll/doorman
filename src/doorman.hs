@@ -12,7 +12,8 @@
 -----------------------------------------------------------------------------
 
 import Control.Applicative ((<$>))
-import Control.Monad (when)
+import Control.Monad (unless,void)
+import Data.Bits
 import Data.Char (chr,ord)
 import Data.Digest.Pure.MD5 (md5)
 import Data.List (find)
@@ -35,14 +36,6 @@ type PassPair = (String,B.ByteString)
 -- returnable password.
 pass_lib :: FilePath
 pass_lib = "/usr/share/doorman/pass_lib"
-
--- |The file holding the hash of the master password."
-hash_fl :: FilePath
-hash_fl = "/usr/share/doorman/master"
-
--- |The hash of the master password.
-io_master_hash :: IO String
-io_master_hash = readFile hash_fl
 
 -- --------------------------------------------------------------------------
 -- Main / test cases.
@@ -205,9 +198,11 @@ help_msg = putStrLn $ "Commands:\n"
 -- handles both '-r' and '-p'.
 recall_pass :: [String] -> Bool -> IO ()
 recall_pass args b = do
-    master_hash <- io_master_hash
-    fl          <- readFile pass_lib
     let pass = args!!2
+    fl <-  map chr . zipWith (.|.) (cycle $ map ord $ show (md5 (B.pack pass)))
+           . map ord <$> readFile pass_lib
+    let master_hash = fl
+    putStrLn fl
     unless (valid_pass pass master_hash) $ error "Incorrect password"
     case get_pair (args!!1) (parse_pairs fl) of
         Nothing -> error "No password set for that name"
@@ -219,29 +214,42 @@ recall_pass args b = do
 -- |Sets a password seed for a name. This function handles '-s'.
 set_pass :: [String] -> IO ()
 set_pass args = do
-    master_hash <- io_master_hash
-    fl          <- unlines . (filter (\l -> takeWhile (/= ':') l /= args!!1)) .
-                   lines <$> readFile pass_lib
     let pass = args!!3
+    fl <- unlines . (filter (\l -> takeWhile (/= ':') l /= args!!1)) . lines
+          . map chr . zipWith (.|.) (cycle $ map ord $ show (md5 (B.pack pass)))
+         . map ord <$> readFile pass_lib
+    let master_hash = (head . lines) fl
     unless (valid_pass pass master_hash) $ error "Incorrect password"
     removeFile pass_lib
-    appendFile pass_lib (fl ++ args!!1 ++ ":" ++ args !!2)
+    appendFile pass_lib $ map chr
+                   $ zipWith (.|.) (cycle $ map ord $ show (md5 (B.pack pass)))
+                         (map ord $ fl ++ args!!1 ++ ":" ++ args !!2)
 
 -- |Allows the user to change their master password.
 -- This function handles '-m'.
 set_master :: [String] -> IO ()
 set_master args = do
-    hash_file   <- io_master_hash
-    master_hash <- io_master_hash >>= readFile
     let pass = args!!2
+    master_hash <- head . lines . map chr . zipWith (.|.)
+                   (cycle $ map ord $ show (md5 (B.pack pass)))
+                   . map ord <$> readFile pass_lib
+    fl <- unlines . (filter (\l -> takeWhile (/= ':') l /= args!!1)) . lines
+          . map chr . zipWith (.|.) (cycle $ map ord $ show (md5 (B.pack pass)))
+         . map ord <$> readFile pass_lib
     unless (valid_pass pass master_hash) $ error "Incorrect password"
-    removeFile hash_fl
-    appendFile hash_fl (show $ md5 (B.pack pass))
+    removeFile pass_lib
+    appendFile pass_lib $ map chr
+                   $ zipWith (.|.) (cycle $ map ord $ show (md5 (B.pack pass)))
+                         (map ord $ master_hash ++ '\n':fl)
 
 -- |Allows the user to set a first master password. This function handles '-i'
 -- and '-h'.
 init_master :: [String] -> Bool -> IO ()
 init_master args b = let pass = args!!1
                      in if b
-                        then putStrLn (show $ md5 (B.pack pass))
-                        else putStr   (show $ md5 (B.pack pass))
+                        then putStrLn $ map chr $ zipWith (.|.)
+                                 (cycle $ map ord $ show (md5 (B.pack pass)))
+                                 (map ord $ show $ md5 (B.pack pass))
+                        else putStr   $ map chr $ zipWith (.|.)
+                                 (cycle $ map ord $ show (md5 (B.pack pass)))
+                                 (map ord $ show $ md5 (B.pack pass))

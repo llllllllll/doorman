@@ -20,7 +20,7 @@ if [ "$1" = "install" ];then
     echo "Adding doorman user..."
     useradd -s /usr/bin/false doorman
     echo "Setting up files and directories..."
-    
+
     if [ ! -d /usr/share/doorman ];then
 	mkdir /usr/share/doorman
     fi
@@ -52,7 +52,7 @@ if [ "$1" = "install" ];then
 	    echo "Retype Master Password: ";read -s passb
 	done
     fi
-    
+
     if [ -f /usr/share/doorman/pass_lib ];then
 	echo "An existing set of password seeds was found, would you like to"
 	echo "recover these password seeds (Y/n):"
@@ -72,38 +72,36 @@ if [ "$1" = "install" ];then
     cp doorman /usr/bin/doorman
     chown doorman /usr/bin/doorman
     chmod +s /usr/bin/doorman
-    
+
     doorman -i $passa > /usr/share/doorman/master
-    echo "You may user \$ doorman -m <new> <old> to change the"
+    echo "You may use \$ doorman -m <new> <old> to change the"
     echo "master password."
 
     echo "Instalation complete!"
-    
-    else 
+
+    else
     if [ "$1" = "uninstall" ];then
 	echo "Uninstalling doorman..."
 	echo "removing binaries..."
-	
+
         rm /usr/bin/doorman
-	
+
 	echo "Removing doorman user..."
         userdel doorman
         echo "Would you like to remove the master hash and password seeds? (y/N):"
         echo "If you choose to save them, ownership will be transfered to root."
         echo "WARNING: after these are removed the passwords will be unrecoverable."
-	
+
         read res;
         if [ "$res" = "y" ] || [ "$res" = "Y" ];then
 	    rm -r /usr/share/doorman
-	
+
 	    else
 	    chown -R root /usr/share/doorman
         fi
 	echo "Removal complete!"
-	
+
         else
         echo "Invalid command: $1: please input 'install' or 'uninstall'"
     fi
 fi
-	
-    
