@@ -12,11 +12,11 @@
 -----------------------------------------------------------------------------
 
 import Control.Applicative ((<$>))
-import Control.Monad (unless,void)
+import Control.Monad (unless,void,join)
 import Data.Bits
-import Data.Char (chr,ord)
+import Data.Char
 import Data.Digest.Pure.MD5 (md5)
-import Data.List (find)
+import Data.List (find,intersperse)
 import qualified Data.ByteString.Lazy.Char8 as B (ByteString,pack)
 import System.Directory (getHomeDirectory,removeFile)
 import System.Environment (getArgs)
@@ -73,7 +73,7 @@ get_seed = show . snd
 -- |Compares the hash of the input password to the saved hash of the master
 -- password.
 valid_pass :: String -> String -> Bool
-valid_pass pre_hash post_hash = show (md5 (B.pack pre_hash)) == post_hash
+valid_pass pass = (==) (show (md5 $ B.pack pass))
 
 -- |Makes an end password from a master password and a seed.
 mk_pass :: String -> String -> String
@@ -199,10 +199,9 @@ help_msg = putStrLn $ "Commands:\n"
 recall_pass :: [String] -> Bool -> IO ()
 recall_pass args b = do
     let pass = args!!2
-    fl <-  map chr . zipWith (.|.) (cycle $ map ord $ show (md5 (B.pack pass)))
-           . map ord <$> readFile pass_lib
-    let master_hash = fl
-    putStrLn fl
+    f' <- map read . lines <$> readFile pass_lib
+    let fl = map chr . zipWith xor f' $ cycle $ map ord pass
+        master_hash = take 32 fl
     unless (valid_pass pass master_hash) $ error "Incorrect password"
     case get_pair (args!!1) (parse_pairs fl) of
         Nothing -> error "No password set for that name"
@@ -215,41 +214,40 @@ recall_pass args b = do
 set_pass :: [String] -> IO ()
 set_pass args = do
     let pass = args!!3
-    fl <- unlines . (filter (\l -> takeWhile (/= ':') l /= args!!1)) . lines
-          . map chr . zipWith (.|.) (cycle $ map ord $ show (md5 (B.pack pass)))
-         . map ord <$> readFile pass_lib
-    let master_hash = (head . lines) fl
+    f' <- map read . lines <$> readFile pass_lib
+    let fl = map chr . zipWith xor f' $ cycle $ map ord pass
+        master_hash = take 32 fl
     unless (valid_pass pass master_hash) $ error "Incorrect password"
     removeFile pass_lib
-    appendFile pass_lib $ map chr
-                   $ zipWith (.|.) (cycle $ map ord $ show (md5 (B.pack pass)))
-                         (map ord $ fl ++ args!!1 ++ ":" ++ args !!2)
+    appendFile pass_lib $ join $ intersperse "\n" $ map show
+                   $ zipWith xor (cycle $ map ord pass)
+                   (map ord $ (unlines $ (filter (\l -> takeWhile (/= ':') l
+                                                  /= args!!1)) $ lines fl)
+                    ++ args!!1 ++ ":" ++ args !!2)
 
 -- |Allows the user to change their master password.
 -- This function handles '-m'.
 set_master :: [String] -> IO ()
 set_master args = do
     let pass = args!!2
-    master_hash <- head . lines . map chr . zipWith (.|.)
-                   (cycle $ map ord $ show (md5 (B.pack pass)))
-                   . map ord <$> readFile pass_lib
-    fl <- unlines . (filter (\l -> takeWhile (/= ':') l /= args!!1)) . lines
-          . map chr . zipWith (.|.) (cycle $ map ord $ show (md5 (B.pack pass)))
-         . map ord <$> readFile pass_lib
+        new_pass = args!!1
+    f' <- map read . lines <$> readFile pass_lib
+    let fl = map chr . zipWith xor f' $ cycle $ map ord pass
+        master_hash = take 32 fl
     unless (valid_pass pass master_hash) $ error "Incorrect password"
     removeFile pass_lib
-    appendFile pass_lib $ map chr
-                   $ zipWith (.|.) (cycle $ map ord $ show (md5 (B.pack pass)))
-                         (map ord $ master_hash ++ '\n':fl)
+    let new_hash = join $ intersperse "\n"
+                   $ map show $ zipWith xor (cycle $ map ord new_pass)
+                   (map ord $ show $ md5 $ B.pack new_pass)
+    appendFile pass_lib $ new_hash ++ '\n' : (join $ intersperse "\n"
+                                             $ map show $ zipWith xor
+                                                   (cycle $ map ord new_pass)
+                                                   (map ord fl))
 
 -- |Allows the user to set a first master password. This function handles '-i'
 -- and '-h'.
 init_master :: [String] -> Bool -> IO ()
 init_master args b = let pass = args!!1
                      in if b
-                        then putStrLn $ map chr $ zipWith (.|.)
-                                 (cycle $ map ord $ show (md5 (B.pack pass)))
-                                 (map ord $ show $ md5 (B.pack pass))
-                        else putStr   $ map chr $ zipWith (.|.)
-                                 (cycle $ map ord $ show (md5 (B.pack pass)))
-                                 (map ord $ show $ md5 (B.pack pass))
+                        then putStrLn $ show $ md5 (B.pack pass)
+                        else putStr   $ show $ md5 (B.pack pass)
