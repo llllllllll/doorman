@@ -73,7 +73,7 @@ get_seed = show . snd
 -- |Compares the hash of the input password to the saved hash of the master
 -- password.
 valid_pass :: String -> String -> Bool
-valid_pass pass = (==) (show (md5 $ B.pack pass))
+valid_pass pass zr = zr == (show $ md5 $ B.pack pass)
 
 -- |Makes an end password from a master password and a seed.
 mk_pass :: String -> String -> String
@@ -200,7 +200,8 @@ recall_pass :: [String] -> Bool -> IO ()
 recall_pass args b = do
     let pass = args!!2
     f' <- map read . lines <$> readFile pass_lib
-    let fl = map chr . zipWith xor f' $ cycle $ map ord pass
+    let fl = map chr . zipWith xor f' $ cycle $ map ord $ show $ md5
+             $ B.pack pass
         master_hash = take 32 fl
     unless (valid_pass pass master_hash) $ error "Incorrect password"
     case get_pair (args!!1) (parse_pairs fl) of
@@ -215,15 +216,17 @@ set_pass :: [String] -> IO ()
 set_pass args = do
     let pass = args!!3
     f' <- map read . lines <$> readFile pass_lib
-    let fl = map chr . zipWith xor f' $ cycle $ map ord pass
+    let fl = map chr . zipWith xor f' $ cycle $ map ord $ show
+             $ md5 $ B.pack pass
         master_hash = take 32 fl
     unless (valid_pass pass master_hash) $ error "Incorrect password"
     removeFile pass_lib
-    appendFile pass_lib $ join $ intersperse "\n" $ map show
-                   $ zipWith xor (cycle $ map ord pass)
-                   (map ord $ (unlines $ (filter (\l -> takeWhile (/= ':') l
-                                                  /= args!!1)) $ lines fl)
-                    ++ args!!1 ++ ":" ++ args !!2)
+    appendFile pass_lib $ (intersperse '\n' $ take 32 $ repeat '0')
+                   ++ ('\n'
+                   : (join $ intersperse "\n" $ map show
+                               $ zipWith xor (map ord $ (args!!1) ++ ':'
+                                              :((args!!2) ++ (drop 32 fl)))
+                                     (map ord master_hash)))
 
 -- |Allows the user to change their master password.
 -- This function handles '-m'.
@@ -236,13 +239,12 @@ set_master args = do
         master_hash = take 32 fl
     unless (valid_pass pass master_hash) $ error "Incorrect password"
     removeFile pass_lib
-    let new_hash = join $ intersperse "\n"
-                   $ map show $ zipWith xor (cycle $ map ord new_pass)
-                   (map ord $ show $ md5 $ B.pack new_pass)
     appendFile pass_lib $ new_hash ++ '\n' : (join $ intersperse "\n"
                                              $ map show $ zipWith xor
-                                                   (cycle $ map ord new_pass)
-                                                   (map ord fl))
+                                                   (cycle
+                                                    $ map ord $ show $ md5
+                                                          $ B.pack pass)
+                                                   (map ord (drop 32 fl)))
 
 -- |Allows the user to set a first master password. This function handles '-i'
 -- and '-h'.
