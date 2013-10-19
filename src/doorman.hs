@@ -15,8 +15,9 @@ import Control.Applicative ((<$>))
 import Control.Monad (unless,void,join)
 import Data.Bits
 import Data.Char
-import Data.Digest.Pure.MD5 (md5)
+import Data.Digest.Pure.SHA
 import Data.List (find,intersperse)
+import Data.String.Utils (split)
 import qualified Data.ByteString.Lazy.Char8 as B (ByteString,pack)
 import System.Directory (getHomeDirectory,removeFile)
 import System.Environment (getArgs)
@@ -27,7 +28,7 @@ import System.Process (system)
 -- PassPair type
 
 -- |The type for a lookup key / password pair.
-type PassPair = (String,B.ByteString)
+type PassPair = (String,String)
 
 -- --------------------------------------------------------------------------
 -- files
@@ -36,6 +37,9 @@ type PassPair = (String,B.ByteString)
 -- returnable password.
 pass_lib :: FilePath
 pass_lib = "/usr/share/doorman/pass_lib"
+
+master_fl :: FilePath
+master_fl = "/usr/share/doorman/master"
 
 -- --------------------------------------------------------------------------
 -- Main / test cases.
@@ -60,27 +64,42 @@ parse_args args
 -- |Parses a string for PassPairs. This function expects a valid String
 -- that contains parse_pairs printed in the format of the pass_lib file.
 parse_pairs :: String -> [PassPair]
-parse_pairs str = map (\l -> ( takeWhile (/= ':') l
-                             , B.pack (tail (dropWhile (/= ':') l))
-                             )) $ lines str
+parse_pairs str = bld [] $ filter (not . null) $ split ":" str
+  where
+      bld ps [] = ps
+      bld ps (name:seed:rs) = bld ((name,seed):ps) rs
 
+
+-- |Formats the PassPairs to be printed to the file.
+fprint_pairs :: PassPair -> String -> String
+fprint_pairs p fl = bld "" $ p:(filter (/=p) $ parse_pairs fl)
+  where
+      bld str [] = str
+      bld str (p:ps) = bld (':':fst p ++ ':':snd p ++ str) ps
+
+
+-- |Returns the pair with the given name or Nothing if it does not exits.
 get_pair :: String -> [PassPair] -> Maybe PassPair
 get_pair name = find (\p -> fst p == name)
 
 get_seed :: PassPair -> String
-get_seed = show . snd
+get_seed = snd
 
 -- |Compares the hash of the input password to the saved hash of the master
 -- password.
 valid_pass :: String -> String -> Bool
-valid_pass pass zr = zr == (show $ md5 $ B.pack pass)
+valid_pass pass hash = hash == (showDigest $ sha256 $ B.pack pass)
 
 -- |Makes an end password from a master password and a seed.
 mk_pass :: String -> String -> String
-mk_pass master seed = let p1 = show $ md5 (B.pack (master ++ seed))
+mk_pass master seed = let p1 = showDigest $ sha512 (B.pack (master ++ seed))
                       in filter (`notElem` "\"'`")
                              $ scanl1 (\x y -> chr
                                        $ ((ord x * ord y) `rem` 93) + 33) p1
+
+-- |Converts the master to an int list to be xor'd for decrytion.
+strord :: String -> [Int]
+strord str = cycle $ map ord $ showDigest $ sha512 $ B.pack str
 
 -- --------------------------------------------------------------------------
 -- Functions that will be called from parse_args directly
@@ -199,10 +218,10 @@ help_msg = putStrLn $ "Commands:\n"
 recall_pass :: [String] -> Bool -> IO ()
 recall_pass args b = do
     let pass = args!!2
+    master_hash <- readFile master_fl 
     f' <- map read . lines <$> readFile pass_lib
-    let fl = map chr . zipWith xor f' $ cycle $ map ord $ show $ md5
-             $ B.pack pass
-        master_hash = take 32 fl
+    let fl =  map chr . zipWith xor f' $ strord pass
+    putStrLn $ fl
     unless (valid_pass pass master_hash) $ error "Incorrect password"
     case get_pair (args!!1) (parse_pairs fl) of
         Nothing -> error "No password set for that name"
@@ -214,19 +233,17 @@ recall_pass args b = do
 -- |Sets a password seed for a name. This function handles '-s'.
 set_pass :: [String] -> IO ()
 set_pass args = do
-    let pass = args!!3
+    let name = args!!1
+        seed = args!!2
+        pass = args!!3
+    master_hash <- readFile master_fl 
     f' <- map read . lines <$> readFile pass_lib
-    let fl = map chr . zipWith xor f' $ cycle $ map ord $ show
-             $ md5 $ B.pack pass
-        master_hash = take 32 fl
+    let fl = map chr . zipWith xor f' $ strord pass
     unless (valid_pass pass master_hash) $ error "Incorrect password"
     removeFile pass_lib
-    appendFile pass_lib $ (intersperse '\n' $ take 32 $ repeat '0')
-                   ++ ('\n'
-                   : (join $ intersperse "\n" $ map show
-                               $ zipWith xor (map ord $ (args!!1) ++ ':'
-                                              :((args!!2) ++ (drop 32 fl)))
-                                     (map ord master_hash)))
+    appendFile pass_lib $ join $ intersperse "\n" $ map show $ zipWith xor
+                   (map ord $ fprint_pairs (name,seed) fl)
+                   (strord pass)
 
 -- |Allows the user to change their master password.
 -- This function handles '-m'.
@@ -234,22 +251,21 @@ set_master :: [String] -> IO ()
 set_master args = do
     let pass = args!!2
         new_pass = args!!1
+    master_hash <- readFile master_fl
     f' <- map read . lines <$> readFile pass_lib
-    let fl = map chr . zipWith xor f' $ cycle $ map ord pass
-        master_hash = take 32 fl
+    let fl = map chr . zipWith xor f' $ strord pass
     unless (valid_pass pass master_hash) $ error "Incorrect password"
+    removeFile master_fl
+    appendFile master_fl $ showDigest $ sha256 $ B.pack new_pass
     removeFile pass_lib
-    appendFile pass_lib $ new_hash ++ '\n' : (join $ intersperse "\n"
-                                             $ map show $ zipWith xor
-                                                   (cycle
-                                                    $ map ord $ show $ md5
-                                                          $ B.pack pass)
-                                                   (map ord (drop 32 fl)))
+    appendFile pass_lib $ join $ intersperse "\n" $ map show 
+                   $ zipWith xor (map ord $ fprint_pairs ("","") fl) (strord new_pass)
+    
 
 -- |Allows the user to set a first master password. This function handles '-i'
 -- and '-h'.
 init_master :: [String] -> Bool -> IO ()
 init_master args b = let pass = args!!1
                      in if b
-                        then putStrLn $ show $ md5 (B.pack pass)
-                        else putStr   $ show $ md5 (B.pack pass)
+                        then putStrLn $ showDigest $ sha256 $ B.pack pass
+                        else putStr   $ showDigest $ sha256 $ B.pack pass
