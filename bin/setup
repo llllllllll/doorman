@@ -3,7 +3,7 @@
 # Joe Jevnik
 # 29.9.2013
 # Sets up the system to be able to use doorman.
-# Requires root priveleges. - Usage: # ./setup
+# Requires root priveleges. - Usage: # ./setup {install | uninstall}
 
 if [ $# -eq 0 ]; then
     echo Usage: "# ./setup install"
