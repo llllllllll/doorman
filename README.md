@@ -3,7 +3,7 @@ doorman
 
 A password manager written in haskell by Joe Jevnik.
 
-Last updated: 19.10.2013
+Last updated: 20.10.2013
 
 Purpose:
 --------
@@ -91,6 +91,10 @@ md5) and prints it WITH a new line.
 
 - `-i [INPUT]` - hashes INPUT (but does not do full password processing, only
 md5) and prints it WITHOUT a new line. This is used in the initialization step.
+
+- `-l [m | o] [PATHTONEWFILE] [MATER]` - merges or overwrites the password
+library with the new file provided. Merging uses the new file's seeds in the
+case of a collision.
 
 -  `-H or --help` - prints the help message.
 
