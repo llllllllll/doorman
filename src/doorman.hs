@@ -1,6 +1,6 @@
 -----------------------------------------------------------------------------
 -- |
--- Program     :  doorman v2.0
+-- Program     :  doorman v2.1.0
 -- Copyright   :  Joe Jevnik 19.10.2013
 -- License     :  GPL v2
 --
