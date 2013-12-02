@@ -12,7 +12,7 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP,OverloadedStrings #-}
 
 import Control.Applicative                       ((<$>))
 import Control.Concurrent                        (threadDelay)
@@ -24,9 +24,9 @@ import Data.List                                 (find,intersperse,sort)
 import Data.Maybe                                (fromMaybe)
 import Data.String.Utils                         (split)
 import Data.Word                                 (Word8)
-import qualified Data.ByteString as B            (ByteString,unpack,pack
-                                                 ,readFile,appendFile)
-import qualified Data.ByteString.Lazy.Char8 as C (pack)
+import qualified Data.ByteString.Lazy as B            --(ByteString,unpack,pack
+                                                 --,readFile,appendFile)
+import qualified Data.ByteString.Lazy.Char8 as C --(ByteString,pack)
 import System.Directory                          (getHomeDirectory,removeFile)
 import System.Environment                        (getArgs)
 import System.IO                                 (hFlush,hSetEcho,stdin,stdout)
@@ -43,17 +43,15 @@ import System.Console.GetOpt (ArgOrder(..),OptDescr(..),ArgDescr(..),getOpt)
 
 -- The type for a lookup key / password pair.
 -- (Name,Literal,Length,Seed)
-type PassType = (String,Bool,Word8,String)
+type PassType = (B.ByteString,Bool,Word8,B.ByteString)
 
 -- The possible flags that can be passed, and their data.
 data Flag = Version | Help | Recall String | Print String
           | Set String | Hash String | Init String | Load String
 
 -- --------------------------------------------------------------------------
--- consts
+-- constants and files.
 
--- Password library that stores passwords to be processed to return the final
--- returnable password.
 pass_lib :: FilePath
 pass_lib = "/usr/share/doorman/pass_lib"
 
@@ -61,7 +59,7 @@ master_fl :: FilePath
 master_fl = "/usr/share/doorman/master"
 
 version_num :: String
-version_num = "2.2.1"
+version_num = "2.2.2"
 
 -- --------------------------------------------------------------------------
 -- Main / arg handling cases.
@@ -110,7 +108,7 @@ handle_flags (fs,ss,es) = mapM_ (handle_flag ss) fs
 -- --------------------------------------------------------------------------
 -- dealing with PassTypes
 
-get_name :: PassType -> String
+get_name :: PassType -> B.ByteString
 get_name (n,_,_,_) = n
 
 get_lit :: PassType -> Bool
@@ -119,45 +117,45 @@ get_lit (_,l,_,_) = l
 get_len :: PassType -> Word8
 get_len (_,_,l,_) = l
 
-get_seed :: PassType -> String
+get_seed :: PassType -> B.ByteString
 get_seed (_,_,_,s) = s
 
 -- --------------------------------------------------------------------------
 -- File reading and parsing
 
-get_master_hash :: IO String
-get_master_hash = head . lines <$> readFile master_fl
+get_master_hash :: IO B.ByteString
+get_master_hash = head . C.lines <$> B.readFile master_fl
 
 --Parses a string for PassTypes. This function expects a valid String
 -- that contains parse_passes printed in the format of the pass_lib file.
-parse_passes :: String -> [PassType]
-parse_passes str = map read_pass $ lines str
+parse_passes :: B.ByteString -> [PassType]
+parse_passes str = map read_pass $ C.lines str
   where
-      read_pass str = let p = split ":" str
-                      in (head p,p!!1 /= "0",read (p!!2),p!!3)
-
+      read_pass str = let p = C.split ':' str
+                      in (head p,p!!1 /= "0",B.head (p!!2),p!!3)
 
 --Filter Print: Filters out the list for any names that are the same as p,
 --  and then formats the rest to be output to the file.
-fprint_passes :: PassType-> [PassType] -> String
+fprint_passes :: PassType-> [PassType] -> B.ByteString
 fprint_passes p ps = bld "" $ p:(filter (\pa -> get_name pa /= get_name p) ps)
   where
       bld str [] = str
-      bld str (p:ps) =
-          bld (get_name p ++ ':':(if get_lit p
-                                        then '1'
-                                        else '0') :':':show (get_len p)
-               ++ ':':get_seed p ++ '\n':str) ps
+      bld str (p:ps)
+          = bld (get_name p `B.append` ':'`C.cons`(if get_lit p
+                                                     then '1'
+                                                     else '0')
+                 `C.cons`':'`C.cons` get_len p `B.append`':'`C.cons`get_seed p
+                             `B.append` '\n'`C.cons`str) ps
 
 -- XOR encrypts the string.
-encrypt :: String -> String -> B.ByteString
-encrypt pass str = B.pack $ map fromIntegral $ zipWith xor
-                   (cycle $ map ord pass) (map ord str)
+encrypt :: B.ByteString -> B.ByteString -> B.ByteString
+encrypt pass str = B.pack $  zipWith xor
+                   (cycle $ B.unpack pass) (B.unpack str)
 
 -- XOR decrypts the string.
-unencrypt :: String -> B.ByteString -> String
+unencrypt :: B.ByteString -> B.ByteString -> B.ByteString
 unencrypt pass fl = map chr $ zipWith xor (cycle $ map ord pass)
-                    (map fromIntegral $ B.unpack fl)
+                    (map fromIntegral $ C.unpack fl)
 
 --Returns the pair with the given name or Nothing if it does not exits.
 get_pass_type :: String -> [PassType] -> Maybe PassType
