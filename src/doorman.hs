@@ -29,7 +29,7 @@ import Data.Word                                 (Word8)
 import Data.ByteString.Lazy                      (ByteString,append,singleton)
 import qualified Data.ByteString.Lazy as B       ( readFile,head
                                                  , unpack,pack,take,appendFile )
-import Data.ByteString.Lazy.Char8                (cons,snoc)
+import Data.ByteString.Lazy.Char8                (cons,snoc,readInt)
 import qualified Data.ByteString.Lazy.Char8 as C ( pack,unpack,putStrLn
                                                  , lines,split )
 import System.Console.GetOpt                     ( ArgOrder(..),OptDescr(..)
@@ -127,6 +127,10 @@ get_len (_,_,l,_) = l
 get_seed :: PassType -> ByteString
 get_seed (_,_,_,s) = s
 
+parse_len :: ByteString -> Word8
+parse_len str = fromIntegral . fst . fromMaybe (error "bad length in parse")
+            $ readInt str
+
 -- --------------------------------------------------------------------------
 -- File reading and parsing
 
@@ -139,8 +143,9 @@ get_master_hash = head . C.lines <$> B.readFile master_fl
 parse_passes :: ByteString -> Map ByteString PassType
 parse_passes str = fromList [(get_name v,v) | v <- map read_pass $ C.lines str]
   where
-      read_pass str = let p = C.split ':' str
-                      in (head p,p!!1 /= "0",B.head (p!!2),p!!3)
+      read_pass str
+          = let p = C.split ':' str
+            in (head p,p!!1 /= "0",parse_len (p!!2),p!!3)
 
 --Filter Print: Filters out the list for any names that are the same as p,
 --  and then formats the rest to be output to the file.
@@ -155,22 +160,18 @@ print_passes ps = bld "" $ map snd $ toList ps
 -- Builds the string to be printed (shared between fprint and print passes.
 bld :: ByteString -> [PassType] -> ByteString
 bld str [] = str
-bld str (p:ps) = bld (((get_name p `snoc` ':')
-                       `append` ((if get_lit p
-                                    then '1'
-                                    else '0') `cons`
-                                 (':' `cons` (singleton (get_len p))))
-                                    `snoc` ':') `append` get_seed p) ps
+bld str (p:ps) = bld (((((get_name p `snoc` ':')
+                         `append` ((if get_lit p
+                                      then '1'
+                                      else '0') `cons`
+                                   (':' `cons` (C.pack $ show (get_len p))))
+                                      `snoc` ':') `append` get_seed p)
+                       `snoc` '\n') `append` str) ps
 
--- XOR encrypts the string.
-encrypt :: ByteString -> ByteString -> ByteString
-encrypt pass str = B.pack $  zipWith xor
+-- XORs the strings.
+xor_pass :: ByteString -> ByteString -> ByteString
+xor_pass pass str = B.pack $  zipWith xor
                    (cycle $ B.unpack pass) (B.unpack str)
-
--- XOR decrypts the string.
-unencrypt :: ByteString -> ByteString -> ByteString
-unencrypt pass fl = B.pack $ zipWith xor (cycle $ B.unpack pass)
-                    (B.unpack fl)
 
 --Compares the hash of the input password to the saved hash of the master
 -- password.
@@ -302,7 +303,7 @@ help_msg = "Commands:\n\
 recall_pass :: ByteString -> Bool -> ByteString -> IO ()
 recall_pass pass b name = do
     master_hash <- get_master_hash
-    fl <- unencrypt master_hash <$> B.readFile pass_lib
+    fl <- xor_pass master_hash <$> B.readFile pass_lib
     unless (valid_pass pass master_hash) incpasswderr
     case lookup name (parse_passes fl) of
         Nothing -> error "No password set for that name"
@@ -323,13 +324,13 @@ recall_pass pass b name = do
 set_pass :: [ByteString] -> String -> IO ()
 set_pass [name,len,seed,pass] opts = do
     master_hash <- get_master_hash
-    fl <- unencrypt master_hash <$> B.readFile pass_lib
+    fl <- xor_pass master_hash <$> B.readFile pass_lib
     unless (valid_pass pass master_hash) incpasswderr
     unless (test_pass seed (sort opts) pass)
                $ error "test failed, try another seed"
     removeFile pass_lib
-    B.appendFile pass_lib $ encrypt master_hash
-         $ fprint_passes (name,('l' `elem` opts),B.head len,seed)
+    B.appendFile pass_lib $ xor_pass master_hash
+         $ fprint_passes (name,('l' `elem` opts),parse_len len,seed)
          $ parse_passes fl
     setFileMode pass_lib (unionFileModes ownerReadMode ownerWriteMode)
   where
@@ -380,14 +381,14 @@ load_pass_lib [new_lib,pass] opt
         dmid <- getEffectiveUserID
         master_hash <- get_master_hash
         unless (valid_pass pass master_hash) incpasswderr
-        fl <- unencrypt master_hash <$> B.readFile pass_lib
+        fl <- xor_pass master_hash <$> B.readFile pass_lib
         let old_pairs = parse_passes fl
         getRealUserID >>= setEffectiveUserID
-        new_fl <- unencrypt master_hash <$> B.readFile (C.unpack new_lib)
+        new_fl <- xor_pass master_hash <$> B.readFile (C.unpack new_lib)
         let new_pairs = difference (parse_passes new_fl) old_pairs
         setEffectiveUserID dmid
         removeFile pass_lib
-        B.appendFile pass_lib $ encrypt master_hash
+        B.appendFile pass_lib $ xor_pass master_hash
              $ print_passes $ parse_passes fl
         setFileMode pass_lib (unionFileModes ownerReadMode ownerWriteMode)
     | opt == "o" = do
