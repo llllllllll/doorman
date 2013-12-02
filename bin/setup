@@ -68,15 +68,12 @@ if [ "$1" = "install" ];then
     echo "Setting up permissions..."
     chown -R doorman /usr/share/doorman
     chmod 600 /usr/share/doorman/pass_lib
-    chmod 600 /usr/share/doorman/master
     cp doorman /usr/bin/doorman
     chown doorman /usr/bin/doorman
     chmod +s /usr/bin/doorman
 
     doorman -i $passa > /usr/share/doorman/master
-    echo "You may use \$ doorman -m <new> <old> to change the"
-    echo "master password."
-
+    chmod 400 /usr/share/doorman/master
     echo "Instalation complete!"
 
     else

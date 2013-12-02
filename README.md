@@ -25,19 +25,22 @@ the clipboard, as dmenu has no stdout.
 Compiling:
 ----------
 
-Required packages:
-
-- `sha` - The package needed for hashing installed through `cabal install`.
+Required packages to run:
 
 - `xclip` - The x clipboard, installed through your distro's package manager
 (pacman,yum,apt-get...).
+
+Required packages to compile (use cabal install):
+
+- `sha` - The package needed for hashing.
+- `bytestring` - Used for efficient file IO.
 
 I compiled with: `$ ghc --make -O2 doorman.hs`
 
 Initializing:
 -------------
 
-Run the included shell script `setup` as root in the same directory as
+Run the included shell script like `# setup install` in the same directory as
 the newly compiled `doorman` to do the follwing:
 
 - Create the new user named 'doorman' without a home directory and who's shell
@@ -64,12 +67,6 @@ you would still need the master pass to do so). Basically, this restricts access
 to your master hash and password seeds to just the doorman program, where they
 will always be handled safely.
 
-NOTE: You can change the password at anytime with _however_ seeds will yeild new
-results:
-
-    $ doorman -m [NEWPASSWORD] [REPEATNEWMASTER] [OLDPASSWORD]
-
-
 Usage:
 ------
 
@@ -82,21 +79,30 @@ clipboard.
 
 - `-p [NAME] [MASTER]` - recalls the password of NAME, printing it to stdout.
 
-- `-s [NAME] [SEED] [MASTER]` - changes the seed for NAME.
+- `-s[OPTS] [NAME] [LENGTH] [SEED] [MASTER]` - changes the seed for NAME with
+options:
+  - `c` - Capital: Make sure there is at least one capital letter in the output.
+  - `s` - Symbol: Make sure there is at least one symbol, or special charater in
+	the output.
+  - `n` - Number: Make sure there is at least one number in the output.
+  - `l` - Save the password litterally, only recall the "seed" without
+	processing"
+The length should be between 1 and 128. Going over 128 will still make passwords
+that are 128 characters long.
 
-- `-m [NEWMASTER] [REPEATNEWMASTER] [OLDMASTER]` - changes the master password.
+- `-h [INPUT]` - hashes INPUT with a sha512 (but does not do full password
+processing) and prints it.
 
-- `-h [INPUT]` - hashes INPUT (but does not do full password processing, only
-md5) and prints it WITH a new line.
+- `-i [INPUT]` - hashes INPUT with a sha256 (but does not do full password
+processing) and prints it.
 
-- `-i [INPUT]` - hashes INPUT (but does not do full password processing, only
-md5) and prints it WITHOUT a new line. This is used in the initialization step.
-
-- `-l [m | o] [PATHTONEWFILE] [MATER]` - merges or overwrites the password
+- `-l [m | o] [PATHTONEWFILE] [MASTER]` - merges or overwrites the password
 library with the new file provided. Merging uses the new file's seeds in the
 case of a collision.
 
 -  `-H or --help` - prints the help message.
+
+- `-v or --version` - prints the version info.
 
 If the user provides a flag, but not enough arguments, then the program will
 request the missing arguments from stdin. When typing in the master password,
@@ -110,13 +116,13 @@ an argument, it will be visible.
 Example Usage:
 --------------
 
-    $ doorman -r gnusocial mypass
+    $ doorman -r test mypass
 	$
 
-This would mean mypass was indeed your password and the password for gnusocial
+This would mean mypass was indeed your password and the password for test
 would be pushed to the clipboard in xclip.
 
-    $ doorman -r gnusocial notmypass
+    $ doorman -r test notmypass
 	doorman: Incorrect password
 	$
 
@@ -124,23 +130,26 @@ This would mean notmypass was _not_ your password, there is no change to the
 clipboard.
 
     $ doorman -r
-	Password Name: gnusocial
+	Password Name: test
 	Master Password:
 	$
 
 This would be the same as the first, only having prompted for the missing
 arguments to be fed from stdin.
 
-    $ doorman -h hashthis
-	df5f5e4c517baba6abb156b2b549cecc3a0e0cc6148f66814d956d41a1675820
+    $ doorman [joejev@Sheila doorman]$ doorman -h hashthis
+	4944849cf0a7e73a7b5b46289ed1ab5b670491523a26c76ef242de6252f4c12c1c2db461ee093e09787113a73875f0c24b93bfdd1864c53dab6e00c09b6b214d
 	$
 
-This just prints the hash of the input text given, only accepts one argument.
+This just prints the sha512 hash of the input text given, only accepts one
+argument. the `-i` command prints a sha256 instead.
 
-    $ doorman -s gnusocial seed masterpass
+    $ doorman -s test 12 seed masterpass
 	$
 
-Set the seed of gnusocial to seed, since master pass was correct.
+Set the seed of test to seed, since master pass was correct. The length of the
+password that is recalled will be set to 12, this allows you to make your
+password as long as a site or program will allow.
 
 
 What's Next:
@@ -148,14 +157,14 @@ What's Next:
 
 Features that I would like to include in the future:
 
-- Passwords are saved with extra data: a bit that means 'literal', or recall
-this password without processing, just return the seed.
+- [DONE]: Passwords are saved with extra data: a bit that means 'literal', or
+recall this password without processing, just return the seed.
 
-- Passwords are saved also with a length setting, as some websites and services
-unfortunatly require shorter passwords, you could tell doorman to cut the length
-of the output to the desired length.
+- [DONE]: Passwords are saved also with a length setting, as some websites and
+services unfortunatly require shorter passwords, you could tell doorman to cut
+the length of the output to the desired length.
 
-- Passwords can be set with 3 new options:
+- [DONE]: Passwords can be set with 3 new options:
   - `c` - Cap: Make sure there is at least one capital letter in the output.
   - `s` - Symbol: Make sure there is at least one symbol, or special charater in
 	the output.
@@ -168,13 +177,13 @@ see a password failing this on rare occasions, and with very short lengths set;
 however, I would like user to know for certain that the password is correct for
 their needs.
 
-Another big feature I am working on is some sort of remote access. Obviously,
-users want to bring their passwords with them, and do not always have access to
-their computer or their seeds. The idea would be the user could send an email
-containing a valid doorman command via another computer or mobile phone to a
-user configured email address. This would then parse the data from the email,
-and send the proper doorman output. I have concerns about mobile phone providers
-and email providers obtaining this information, so ideally, you would be setting
-up your own mail server to handle the requests. The goal would be to make a
-configuration file that allows people to easily set up their own doorman server
-and run this themselves. This project is currently not high priority.
+[TODO]: Another big feature I am working on is some sort of remote access.
+Obviously, users want to bring their passwords with them, and do not always have
+access to their computer or their seeds. The idea would be the user could send
+an email containing a valid doorman command via another computer or mobile phone
+to a user configured email address. This would then parse the data from the
+email, and send the proper doorman output. I have concerns about mobile phone
+providers and email providers obtaining this information, so ideally, you would
+be setting up your own mail server to handle the requests. The goal would be to
+make a configuration file that allows people to easily set up their own doorman
+server and run this themselves. This project is currently not high priority.
