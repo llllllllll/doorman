@@ -1,6 +1,6 @@
 -----------------------------------------------------------------------------
 --
--- Program     :  doorman v2.2.2
+-- Program     :  doorman v3.0.0
 -- Copyright   :  Joe Jevnik 2.12.2013
 -- License     :  GPL v2
 --
@@ -14,17 +14,17 @@
 
 {-# LANGUAGE CPP,OverloadedStrings #-}
 
+import Prelude                            hiding (lookup)
 import Control.Applicative                       ((<$>))
 import Control.Concurrent                        (threadDelay)
-import Control.Monad                             (unless,void,join)
+import Control.Monad                             (unless,void)
 import Data.Bits                                 (xor)
 import Data.Char                                 (chr,ord)
 import Data.Digest.Pure.SHA                      (sha256,sha512,showDigest)
-import Data.List                                 (find,intersperse,sort)
-import Data.Map                                  (Map)
-import qualified Data.Map as M
+import Data.List                                 (sort)
+import Data.Map                                  ( Map,delete,insert,difference
+                                                 , toList,fromList,lookup)
 import Data.Maybe                                (fromMaybe)
-import Data.String.Utils                         (split)
 import Data.Word                                 (Word8)
 import Data.ByteString.Lazy                      (ByteString,append,singleton)
 import qualified Data.ByteString.Lazy as B       ( readFile,head
@@ -32,7 +32,9 @@ import qualified Data.ByteString.Lazy as B       ( readFile,head
 import Data.ByteString.Lazy.Char8                (cons,snoc)
 import qualified Data.ByteString.Lazy.Char8 as C ( pack,unpack,putStrLn
                                                  , lines,split )
-import System.Directory                          (getHomeDirectory,removeFile)
+import System.Console.GetOpt                     ( ArgOrder(..),OptDescr(..)
+                                                 , ArgDescr(..),getOpt)
+import System.Directory                          (removeFile)
 import System.Environment                        (getArgs)
 import System.IO                                 (hFlush,hSetEcho,stdin,stdout)
 import System.Process                            (system)
@@ -41,8 +43,6 @@ import System.Posix.Files                        ( unionFileModes,ownerReadMode
 import System.Posix.User                         ( getRealUserID
                                                  , getEffectiveUserID
                                                  , setEffectiveUserID)
-import System.Console.GetOpt                     ( ArgOrder(..),OptDescr(..)
-                                                 , ArgDescr(..),getOpt)
 
 -- --------------------------------------------------------------------------
 -- data types
@@ -65,7 +65,7 @@ master_fl :: FilePath
 master_fl = "/usr/share/doorman/master"
 
 version_num :: String
-version_num = "2.2.2"
+version_num = "3.0.0"
 
 -- --------------------------------------------------------------------------
 -- Main / arg handling cases.
@@ -98,6 +98,7 @@ parse_setopts = Set . fromMaybe ""
 
 -- Parses the options
 handle_flags :: ([Flag],[String],[String]) -> IO ()
+handle_flags ([],_,_)   = putStrLn "Usage: doorman [COMMAND]... [PARAM]..."
 handle_flags (fs,ss,es) = mapM_ (handle_flag ss) fs
   where
       handle_flag _ Version     = putStrLn $ "doorman version "  ++ version_num
@@ -129,14 +130,14 @@ get_seed (_,_,_,s) = s
 -- --------------------------------------------------------------------------
 -- File reading and parsing
 
+-- Return the hash of the master password that is saved.
 get_master_hash :: IO ByteString
 get_master_hash = head . C.lines <$> B.readFile master_fl
 
 --Parses a string for PassTypes. This function expects a valid String
 -- that contains parse_passes printed in the format of the pass_lib file.
 parse_passes :: ByteString -> Map ByteString PassType
-parse_passes str = M.fromList [(get_name v,v) | v <- map read_pass
-                                                     $ C.lines str]
+parse_passes str = fromList [(get_name v,v) | v <- map read_pass $ C.lines str]
   where
       read_pass str = let p = C.split ':' str
                       in (head p,p!!1 /= "0",B.head (p!!2),p!!3)
@@ -144,30 +145,22 @@ parse_passes str = M.fromList [(get_name v,v) | v <- map read_pass
 --Filter Print: Filters out the list for any names that are the same as p,
 --  and then formats the rest to be output to the file.
 fprint_passes :: PassType -> Map ByteString PassType -> ByteString
-fprint_passes p ps = bld "" $ p:(filter (\pa -> get_name pa /= get_name p) ps)
-  where
-      bld str [] = str
-      bld str (p:ps)
-          = bld (((get_name p `snoc` ':') `append` ((if get_lit p
-                                                       then '1'
-                                                       else '0') `cons`
-                                                    (':' `cons`
-                                                     (singleton (get_len p))))
-                  `snoc` ':') `append` get_seed p) ps
+fprint_passes p ps = bld "" $ p:(map snd $ toList $ delete (get_name p) ps)
 
 --Filter Print: Filters out the list for any names that are the same as p,
 --  and then formats the rest to be output to the file.
 print_passes :: Map ByteString PassType -> ByteString
-print_passes ps = bld "" $ map snd $ M.toList ps
-  where
-      bld str [] = str
-      bld str (p:ps)
-          = bld (((get_name p `snoc` ':') `append` ((if get_lit p
-                                                       then '1'
-                                                       else '0') `cons`
-                                                    (':' `cons`
-                                                     (singleton (get_len p))))
-                  `snoc` ':') `append` get_seed p) ps
+print_passes ps = bld "" $ map snd $ toList ps
+
+-- Builds the string to be printed (shared between fprint and print passes.
+bld :: ByteString -> [PassType] -> ByteString
+bld str [] = str
+bld str (p:ps) = bld (((get_name p `snoc` ':')
+                       `append` ((if get_lit p
+                                    then '1'
+                                    else '0') `cons`
+                                 (':' `cons` (singleton (get_len p))))
+                                    `snoc` ':') `append` get_seed p) ps
 
 -- XOR encrypts the string.
 encrypt :: ByteString -> ByteString -> ByteString
@@ -178,10 +171,6 @@ encrypt pass str = B.pack $  zipWith xor
 unencrypt :: ByteString -> ByteString -> ByteString
 unencrypt pass fl = B.pack $ zipWith xor (cycle $ B.unpack pass)
                     (B.unpack fl)
-
---Returns the pair with the given name or Nothing if it does not exits.
-get_pass_type :: ByteString -> [PassType] -> Maybe PassType
-get_pass_type name = find (\p -> get_name p == name)
 
 --Compares the hash of the input password to the saved hash of the master
 -- password.
@@ -195,14 +184,9 @@ mk_pass master seed = let p1 = showDigest $ sha512 (master `append` seed)
                              $ scanl1 (\x y -> chr
                                        $ ((ord x * ord y) `rem` 93) + 33) p1
 
---Converts the master to an int list by hashing and taking the ord of the
--- chars to be xor'd for decrytion.
-strord :: String -> [Int]
-strord str = cycle $ map ord $ showDigest $ sha512 $ C.pack str
-
 --Error to throw if the password is wrong. This includes a 2 second delay.
 incpasswderr :: IO ()
-incpasswderr = threadDelay 3000000 >> error "Incorrect password"
+incpasswderr = threadDelay 2000000 >> error "Incorrect password"
 
 -- --------------------------------------------------------------------------
 -- Functions that will be called from parse_as directly
@@ -298,16 +282,16 @@ load_params ls as opts
 --Prints the help dialogue.
 help_msg :: String
 help_msg = "Commands:\n\
-\t-r [NAME] [MASTER] - copies the password of NAME.\n\
-\t-p [NAME] [MASTER] - prints the password of NAME.\n\
-\t-s [NAME] [SEED] [MASTER] - changes the seed for NAME.\n\
-\t-m [NEWMASTER] [OLDMASTER] - changes the master password.\n\
-\t-h [INPUT] - hashes INPUT and prints to a new line.\n\
-\t-i [INPUT] - hashes INPUT, used when making a first master.\n\
-\t-l [m | o] [PATHTONEWFILE] [MATER] - merges or overwrites the\
-\n\t\tpassword library with the new file provided. Merging uses\n\
-\t\tthe new file's seeds in the case of a collision.\n\
-\t-H --help - prints this message."
+  -r [NAME] [MASTER] - copies the password of NAME.\n\
+  -p [NAME] [MASTER] - prints the password of NAME.\n\
+  -s[OPTS] [NAME] [LENGTH] [SEED] [MASTER] - changes the seed for NAME.\n\
+  -h [INPUT] - hashes INPUT with a sha512.\n\
+  -i [INPUT] - hashes INPUT with a sha256.\n\
+  -l [m | o] [PATHTONEWFILE] [MASTER] - merges or overwrites the\
+\n    password library with the new file provided. Merging uses\n\
+    the new file's seeds in the case of a collision.\n\
+  -v --version - prints version information.\n\
+  -H --help - prints this message."
 
 -- --------------------------------------------------------------------------
 -- Functions that will be called after *_params has checked that it is safe
@@ -320,7 +304,7 @@ recall_pass pass b name = do
     master_hash <- get_master_hash
     fl <- unencrypt master_hash <$> B.readFile pass_lib
     unless (valid_pass pass master_hash) incpasswderr
-    case get_pass_type name (parse_passes fl) of
+    case lookup name (parse_passes fl) of
         Nothing -> error "No password set for that name"
         Just p  -> if b
                      then C.putStrLn $ B.take (fromIntegral $ get_len p)
@@ -382,8 +366,8 @@ set_pass [name,len,seed,pass] opts = do
           | otherwise = True
 
 
---Allows the user to set a first master password. This function handles '-i'
--- and '-h'.
+--Allows the user to hash strings using sha512 and sha256.
+-- This function handles '-i' and '-h'.
 hash_str :: String -> Bool -> IO ()
 hash_str pass True  = putStrLn $ showDigest $ sha512 $ C.pack pass
 hash_str pass False = putStrLn $ showDigest $ sha256 $ C.pack pass
@@ -400,8 +384,7 @@ load_pass_lib [new_lib,pass] opt
         let old_pairs = parse_passes fl
         getRealUserID >>= setEffectiveUserID
         new_fl <- unencrypt master_hash <$> B.readFile (C.unpack new_lib)
-        let new_pairs = let pp = parse_passes new_fl
-                        in filter (`notElem` pp) old_pairs
+        let new_pairs = difference (parse_passes new_fl) old_pairs
         setEffectiveUserID dmid
         removeFile pass_lib
         B.appendFile pass_lib $ encrypt master_hash
