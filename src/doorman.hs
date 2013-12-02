@@ -1,6 +1,6 @@
 -----------------------------------------------------------------------------
 --
--- Program     :  doorman v2.2.0
+-- Program     :  doorman v2.2.1
 -- Copyright   :  Joe Jevnik 19.10.2013
 -- License     :  GPL v2
 --
@@ -50,7 +50,7 @@ data Flag = Version | Help | Recall String | Print String
           | Set String | Hash String | Init String | Load String
 
 -- --------------------------------------------------------------------------
--- files
+-- consts
 
 -- Password library that stores passwords to be processed to return the final
 -- returnable password.
@@ -59,6 +59,9 @@ pass_lib = "/usr/share/doorman/pass_lib"
 
 master_fl :: FilePath
 master_fl = "/usr/share/doorman/master"
+
+version_num :: String
+version_num = "2.2.1"
 
 -- --------------------------------------------------------------------------
 -- Main / arg handling cases.
@@ -93,7 +96,8 @@ parse_setopts = Set . fromMaybe ""
 handle_flags :: ([Flag],[String],[String]) -> IO ()
 handle_flags (fs,ss,es) = mapM_ (handle_flag ss) fs
   where
-      handle_flag _ Version     = putStrLn "doorman version 2.2.0 by Joe Jevnik"
+      handle_flag _ Version     = putStrLn $ "doorman version "  ++ version_num
+                                  ++ "\nby Joe Jevnik"
       handle_flag _ Help        = putStrLn help_msg
       handle_flag ss (Recall p) = recall_params (length ss) ss False p
       handle_flag ss (Print p)  = recall_params (length ss) ss True p
@@ -339,8 +343,8 @@ recall_pass pass b name = do
                      else void (system $ "echo \""
                                 ++ take (fromIntegral $ get_len p)
                                        (if get_lit p
-                                          then mk_pass pass (get_seed p)
-                                          else get_seed p)
+                                          then get_seed p
+                                          else mk_pass pass (get_seed p))
                                        ++ "\" | xclip -selection c")
 
 --Sets a password seed for a name. This function handles '-s'.
