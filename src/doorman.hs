@@ -1,7 +1,7 @@
 -----------------------------------------------------------------------------
 --
--- Program     :  doorman v2.2.1
--- Copyright   :  Joe Jevnik 19.10.2013
+-- Program     :  doorman v2.2.2
+-- Copyright   :  Joe Jevnik 2.12.2013
 -- License     :  GPL v2
 --
 -- Maintainer  :  Joe Jevnik
@@ -21,29 +21,35 @@ import Data.Bits                                 (xor)
 import Data.Char                                 (chr,ord)
 import Data.Digest.Pure.SHA                      (sha256,sha512,showDigest)
 import Data.List                                 (find,intersperse,sort)
+import Data.Map                                  (Map)
+import qualified Data.Map as M
 import Data.Maybe                                (fromMaybe)
 import Data.String.Utils                         (split)
 import Data.Word                                 (Word8)
-import qualified Data.ByteString.Lazy as B            --(ByteString,unpack,pack
-                                                 --,readFile,appendFile)
-import qualified Data.ByteString.Lazy.Char8 as C --(ByteString,pack)
+import Data.ByteString.Lazy                      (ByteString,append,singleton)
+import qualified Data.ByteString.Lazy as B       ( readFile,head
+                                                 , unpack,pack,take,appendFile )
+import Data.ByteString.Lazy.Char8                (cons,snoc)
+import qualified Data.ByteString.Lazy.Char8 as C ( pack,unpack,putStrLn
+                                                 , lines,split )
 import System.Directory                          (getHomeDirectory,removeFile)
 import System.Environment                        (getArgs)
 import System.IO                                 (hFlush,hSetEcho,stdin,stdout)
 import System.Process                            (system)
-import System.Posix.Files                        (unionFileModes,ownerReadMode
-                                                 ,ownerWriteMode,setFileMode)
-import System.Posix.User                         (getRealUserID
-                                                 ,getEffectiveUserID
-                                                 ,setEffectiveUserID)
-import System.Console.GetOpt (ArgOrder(..),OptDescr(..),ArgDescr(..),getOpt)
+import System.Posix.Files                        ( unionFileModes,ownerReadMode
+                                                 , ownerWriteMode,setFileMode)
+import System.Posix.User                         ( getRealUserID
+                                                 , getEffectiveUserID
+                                                 , setEffectiveUserID)
+import System.Console.GetOpt                     ( ArgOrder(..),OptDescr(..)
+                                                 , ArgDescr(..),getOpt)
 
 -- --------------------------------------------------------------------------
 -- data types
 
 -- The type for a lookup key / password pair.
 -- (Name,Literal,Length,Seed)
-type PassType = (B.ByteString,Bool,Word8,B.ByteString)
+type PassType = (ByteString,Bool,Word8,ByteString)
 
 -- The possible flags that can be passed, and their data.
 data Flag = Version | Help | Recall String | Print String
@@ -108,7 +114,7 @@ handle_flags (fs,ss,es) = mapM_ (handle_flag ss) fs
 -- --------------------------------------------------------------------------
 -- dealing with PassTypes
 
-get_name :: PassType -> B.ByteString
+get_name :: PassType -> ByteString
 get_name (n,_,_,_) = n
 
 get_lit :: PassType -> Bool
@@ -117,58 +123,74 @@ get_lit (_,l,_,_) = l
 get_len :: PassType -> Word8
 get_len (_,_,l,_) = l
 
-get_seed :: PassType -> B.ByteString
+get_seed :: PassType -> ByteString
 get_seed (_,_,_,s) = s
 
 -- --------------------------------------------------------------------------
 -- File reading and parsing
 
-get_master_hash :: IO B.ByteString
+get_master_hash :: IO ByteString
 get_master_hash = head . C.lines <$> B.readFile master_fl
 
 --Parses a string for PassTypes. This function expects a valid String
 -- that contains parse_passes printed in the format of the pass_lib file.
-parse_passes :: B.ByteString -> [PassType]
-parse_passes str = map read_pass $ C.lines str
+parse_passes :: ByteString -> Map ByteString PassType
+parse_passes str = M.fromList [(get_name v,v) | v <- map read_pass
+                                                     $ C.lines str]
   where
       read_pass str = let p = C.split ':' str
                       in (head p,p!!1 /= "0",B.head (p!!2),p!!3)
 
 --Filter Print: Filters out the list for any names that are the same as p,
 --  and then formats the rest to be output to the file.
-fprint_passes :: PassType-> [PassType] -> B.ByteString
+fprint_passes :: PassType -> Map ByteString PassType -> ByteString
 fprint_passes p ps = bld "" $ p:(filter (\pa -> get_name pa /= get_name p) ps)
   where
       bld str [] = str
       bld str (p:ps)
-          = bld (get_name p `B.append` ':'`C.cons`(if get_lit p
-                                                     then '1'
-                                                     else '0')
-                 `C.cons`':'`C.cons` get_len p `B.append`':'`C.cons`get_seed p
-                             `B.append` '\n'`C.cons`str) ps
+          = bld (((get_name p `snoc` ':') `append` ((if get_lit p
+                                                       then '1'
+                                                       else '0') `cons`
+                                                    (':' `cons`
+                                                     (singleton (get_len p))))
+                  `snoc` ':') `append` get_seed p) ps
+
+--Filter Print: Filters out the list for any names that are the same as p,
+--  and then formats the rest to be output to the file.
+print_passes :: Map ByteString PassType -> ByteString
+print_passes ps = bld "" $ map snd $ M.toList ps
+  where
+      bld str [] = str
+      bld str (p:ps)
+          = bld (((get_name p `snoc` ':') `append` ((if get_lit p
+                                                       then '1'
+                                                       else '0') `cons`
+                                                    (':' `cons`
+                                                     (singleton (get_len p))))
+                  `snoc` ':') `append` get_seed p) ps
 
 -- XOR encrypts the string.
-encrypt :: B.ByteString -> B.ByteString -> B.ByteString
+encrypt :: ByteString -> ByteString -> ByteString
 encrypt pass str = B.pack $  zipWith xor
                    (cycle $ B.unpack pass) (B.unpack str)
 
 -- XOR decrypts the string.
-unencrypt :: B.ByteString -> B.ByteString -> B.ByteString
-unencrypt pass fl = map chr $ zipWith xor (cycle $ map ord pass)
-                    (map fromIntegral $ C.unpack fl)
+unencrypt :: ByteString -> ByteString -> ByteString
+unencrypt pass fl = B.pack $ zipWith xor (cycle $ B.unpack pass)
+                    (B.unpack fl)
 
 --Returns the pair with the given name or Nothing if it does not exits.
-get_pass_type :: String -> [PassType] -> Maybe PassType
+get_pass_type :: ByteString -> [PassType] -> Maybe PassType
 get_pass_type name = find (\p -> get_name p == name)
 
 --Compares the hash of the input password to the saved hash of the master
 -- password.
-valid_pass :: String -> String -> Bool
-valid_pass pass hash = hash == (showDigest $ sha256 $ C.pack pass)
+valid_pass :: ByteString -> ByteString -> Bool
+valid_pass pass hash = C.unpack hash == (showDigest $ sha256 pass)
 
 --Makes an end password from a master password and a seed.
-mk_pass :: String -> String -> String
-mk_pass master seed = let p1 = showDigest $ sha512 (C.pack (master ++ seed))
+mk_pass :: ByteString -> ByteString -> String
+mk_pass master seed = let p1 = showDigest $ sha512 (master `append` seed)
                       in filter (`notElem` "\"'`")
                              $ scanl1 (\x y -> chr
                                        $ ((ord x * ord y) `rem` 93) + 33) p1
@@ -197,8 +219,8 @@ recall_params ln as b p
         pass <- getLine
         hSetEcho stdin True
         putStrLn ""
-        recall_pass pass b p
-    | otherwise = recall_pass (head as) b p
+        recall_pass (C.pack pass) b (C.pack p)
+    | otherwise = recall_pass (C.pack $ head as) b (C.pack p)
 
 --Accumulates all parameters for '-s'.
 set_params :: Int -> [String] -> String ->  IO ()
@@ -208,6 +230,7 @@ set_params ln as os
         hFlush stdout
         name <- getLine
         putStr "Length: "
+        hFlush stdout
         len <- getLine
         hFlush stdout
         putStr "Seed: "
@@ -218,7 +241,7 @@ set_params ln as os
         pass <- getLine
         hSetEcho stdin True
         putStrLn ""
-        set_pass (name:len:seed:[pass]) os
+        set_pass (map C.pack $ name:len:seed:[pass]) os
     | ln == 1 = do
         putStr "Length: "
         len <- getLine
@@ -232,7 +255,7 @@ set_params ln as os
         pass <- getLine
         hSetEcho stdin True
         putStrLn ""
-        set_pass (as ++ [len,seed,pass]) os
+        set_pass (map C.pack $ as ++ [len,seed,pass]) os
     | ln == 2 = do
         putStr "Seed: "
         hFlush stdout
@@ -243,7 +266,7 @@ set_params ln as os
         pass <- getLine
         hSetEcho stdin True
         putStrLn ""
-        set_pass (as ++ [seed,pass]) os
+        set_pass (map C.pack $ as ++ [seed,pass]) os
     | ln == 3 = do
         putStr "Master password: "
         hFlush stdout
@@ -251,42 +274,8 @@ set_params ln as os
         pass <- getLine
         hSetEcho stdin True
         putStrLn ""
-        set_pass (as ++ [pass]) os
-    | otherwise = set_pass as os
-
---Accumulates all parameters for '-m'.
-master_params :: Int -> [String] -> IO ()
-master_params ln as
-    | ln == 1 = do
-        putStr "New master: "
-        hFlush stdout
-        hSetEcho stdin False
-        new <- getLine
-        putStr "\nRepeat new master: "
-        hFlush stdout
-        hSetEcho stdin False
-        new2 <- getLine
-        putStr "\nMaster password: "
-        pass <- getLine
-        hSetEcho stdin True
-        set_master (reverse $ pass:new2:new:as)
-    | ln == 2 = do
-        putStr "Repeat new master: "
-        hFlush stdout
-        hSetEcho stdin False
-        new2 <- getLine
-        putStr "\nMaster password: "
-        pass <- getLine
-        hSetEcho stdin True
-        set_master (as ++ [new2,pass])
-    | ln == 3 = do
-        putStr "Master password: "
-        hFlush stdout
-        hSetEcho stdin False
-        pass <- getLine
-        hSetEcho stdin True
-        set_master (as ++ [pass])
-    | otherwise = set_master as
+        set_pass (map C.pack $ as ++ [pass]) os
+    | otherwise = set_pass (map C.pack as) os
 
 --Accumilates all parameters for '-l'.
 load_params :: Int -> [String] -> String -> IO ()
@@ -298,13 +287,13 @@ load_params ls as opts
         putStr "\nMaster password: "
         pass <- getLine
         hSetEcho stdin True
-        load_pass_lib ([nw,pass]) opts
+        load_pass_lib (map C.pack [nw,pass]) opts
     | ls == 1 = do
         putStr "\nMaster password: "
         pass <- getLine
         hSetEcho stdin True
-        load_pass_lib (as ++ [pass]) opts
-    | otherwise = load_pass_lib as opts
+        load_pass_lib (map C.pack $ as ++ [pass]) opts
+    | otherwise = load_pass_lib (map C.pack as) opts
 
 --Prints the help dialogue.
 help_msg :: String
@@ -326,7 +315,7 @@ help_msg = "Commands:\n\
 --Recalls the given password. if b is True, then prints the password to
 -- stdout. If b is False, pushes the password to the clipboard. This function
 -- handles both '-r' and '-p'.
-recall_pass :: String -> Bool -> String -> IO ()
+recall_pass :: ByteString -> Bool -> ByteString -> IO ()
 recall_pass pass b name = do
     master_hash <- get_master_hash
     fl <- unencrypt master_hash <$> B.readFile pass_lib
@@ -334,19 +323,20 @@ recall_pass pass b name = do
     case get_pass_type name (parse_passes fl) of
         Nothing -> error "No password set for that name"
         Just p  -> if b
-                     then putStrLn $ take (fromIntegral $ get_len p)
+                     then C.putStrLn $ B.take (fromIntegral $ get_len p)
                               (if get_lit p
                                  then get_seed p
-                                 else mk_pass pass (get_seed p))
+                                 else C.pack $ mk_pass pass (get_seed p))
                      else void (system $ "echo \""
-                                ++ take (fromIntegral $ get_len p)
-                                       (if get_lit p
-                                          then get_seed p
-                                          else mk_pass pass (get_seed p))
+                                ++ (C.unpack $ B.take (fromIntegral $ get_len p)
+                                         (if get_lit p
+                                            then get_seed p
+                                            else C.pack $ mk_pass pass
+                                                     (get_seed p)))
                                        ++ "\" | xclip -selection c")
 
 --Sets a password seed for a name. This function handles '-s'.
-set_pass :: [String] -> String -> IO ()
+set_pass :: [ByteString] -> String -> IO ()
 set_pass [name,len,seed,pass] opts = do
     master_hash <- get_master_hash
     fl <- unencrypt master_hash <$> B.readFile pass_lib
@@ -355,7 +345,7 @@ set_pass [name,len,seed,pass] opts = do
                $ error "test failed, try another seed"
     removeFile pass_lib
     B.appendFile pass_lib $ encrypt master_hash
-         $ fprint_passes (name,('l' `elem` opts),read len,seed)
+         $ fprint_passes (name,('l' `elem` opts),B.head len,seed)
          $ parse_passes fl
     setFileMode pass_lib (unionFileModes ownerReadMode ownerWriteMode)
   where
@@ -391,21 +381,6 @@ set_pass [name,len,seed,pass] opts = do
                                || c `notElem` ['A'..'Z'])) $ mk_pass pass seed
           | otherwise = True
 
---Allows the user to change their master password.
--- This function handles '-m'.
-set_master :: [String] -> IO ()
-set_master [new_pass,new_pass_dup,pass] = do
-    master_hash <- get_master_hash
-    fl <- (\f -> map chr . zipWith xor f $ strord pass) . map read . lines
-              <$> readFile pass_lib
-    unless (valid_pass pass master_hash) incpasswderr
-    unless (new_pass == new_pass_dup) $ error "Passwords do not match"
-    removeFile master_fl
-    appendFile master_fl $ showDigest $ sha256 $ C.pack new_pass
-    removeFile pass_lib
-    appendFile pass_lib $ join $ intersperse "\n" $ map show
-                   $ zipWith xor (map ord $ fprint_passes ("",True,0,"")
-                                          (parse_passes fl)) (strord new_pass)
 
 --Allows the user to set a first master password. This function handles '-i'
 -- and '-h'.
@@ -415,33 +390,29 @@ hash_str pass False = putStrLn $ showDigest $ sha256 $ C.pack pass
 
 --Alows the user to load and merge, or load an overwrite their password lib
 -- with a new password lib.
-load_pass_lib :: [String] -> String -> IO ()
+load_pass_lib :: [ByteString] -> String -> IO ()
 load_pass_lib [new_lib,pass] opt
     | opt == "m" = do
         dmid <- getEffectiveUserID
         master_hash <- get_master_hash
         unless (valid_pass pass master_hash) incpasswderr
-        fl <- (\f -> map chr . zipWith xor f $ strord pass) . map read . lines
-              <$> readFile pass_lib
+        fl <- unencrypt master_hash <$> B.readFile pass_lib
         let old_pairs = parse_passes fl
         getRealUserID >>= setEffectiveUserID
-        new_fl <- (\f -> map chr . zipWith xor f $ strord pass) . map read
-                  . lines <$> readFile new_lib
+        new_fl <- unencrypt master_hash <$> B.readFile (C.unpack new_lib)
         let new_pairs = let pp = parse_passes new_fl
                         in filter (`notElem` pp) old_pairs
         setEffectiveUserID dmid
         removeFile pass_lib
-        appendFile pass_lib $ join $ intersperse "\n" $ map show
-                       $ zipWith xor (map ord $ fprint_passes ("",False,0,"")
-                                          new_pairs)
-                             (strord pass)
+        B.appendFile pass_lib $ encrypt master_hash
+             $ print_passes $ parse_passes fl
         setFileMode pass_lib (unionFileModes ownerReadMode ownerWriteMode)
     | opt == "o" = do
         master_hash <- get_master_hash
         unless (valid_pass pass master_hash) incpasswderr
         dmid <- getEffectiveUserID
         getRealUserID >>= setEffectiveUserID
-        new_fl <- readFile new_lib
+        new_fl <- readFile (C.unpack new_lib)
         removeFile pass_lib
         appendFile pass_lib new_fl
         setFileMode pass_lib (unionFileModes ownerReadMode ownerWriteMode)
