@@ -313,25 +313,23 @@ set_pass [name,len,seed,pass] opts = do
     setFileMode pass_lib (unionFileModes ownerReadMode ownerWriteMode)
   where
       char_to_f ch
-          | ch == 'c' = c
-          | ch == 'n' = n
-          | ch == 's' = s
+          | ch == 'c' = any isUpper
+          | ch == 'n' = any isDigit
+          | ch == 's' = any isSymbol
           | otherwise = const True
       test_pass seed opts pass
           | any (`notElem` "clns") opts = error "options must be c, n, or s"
           | otherwise = let ps = mk_pass pass seed
                         in all (\ch -> char_to_f ch ps) opts
-      c = any isUpper
-      n = any isDigit
-      s = any isSymbol
 
 
 --Allows the user to hash strings using sha512 and sha256.
 -- This function handles '-i' and '-h'.
 hash_str :: String -> Bool -> IO ()
-hash_str pass True  = putStrLn $ showDigest $ sha512 $ C.pack pass
-hash_str pass False = putStrLn $ showDigest $ sha256 $ C.pack pass
-
+hash_str pass b = putStrLn $ (if b
+                                then showDigest . sha512
+                                else showDigest . sha256) $ C.pack pass
+                  
 --Alows the user to load and merge, or load an overwrite their password lib
 -- with a new password lib.
 load_pass_lib :: [ByteString] -> String -> IO ()
