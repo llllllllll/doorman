@@ -1,5 +1,5 @@
 -----------------------------------------------------------------------------
---
+-- |
 -- Program     :  doorman v3.0.0
 -- Copyright   :  Joe Jevnik 2.12.2013
 -- License     :  GPL v2
@@ -48,32 +48,36 @@ import System.Posix.User                         ( getRealUserID
 -- --------------------------------------------------------------------------
 -- data types
 
--- The type for a lookup key / password pair.
--- (Name,Literal,Length,Seed)
-type PassType = (ByteString,Bool,Word8,ByteString)
+-- |The type for a lookup key / password pair.
+data PasswordData = PasswordData { passName :: ByteString
+                                 , isLit    :: Bool
+                                 , passLen  :: Word8
+                                 , passSeed :: ByteString
+                                 }
 
--- The possible flags that can be passed, and their data.
+-- |The possible flags that can be passed, and their data.
 data Flag = Version | Help | Recall String | Print String
-          | Set String | Hash String | Init String | Load String
+          | Set String | Hash512 String | Hash256 String | Load String
 
 -- --------------------------------------------------------------------------
 -- constants and files.
 
-pass_lib :: FilePath
-pass_lib = "/usr/share/doorman/pass_lib"
+passLib :: FilePath
+passLib = "/usr/share/doorman/passLib"
 
-master_fl :: FilePath
-master_fl = "/usr/share/doorman/master"
+masterFl :: FilePath
+masterFl = "/usr/share/doorman/master"
 
-version_num :: String
-version_num = "3.0.0"
+versionNum :: String
+versionNum = "3.0.0"
 
 -- --------------------------------------------------------------------------
 -- Main / arg handling cases.
-main :: IO ()
-main = getArgs >>= \as -> handle_flags (getOpt RequireOrder options as)
 
--- Parses the command line args.
+main :: IO ()
+main = getArgs >>= \as -> handleFlags (getOpt RequireOrder options as)
+
+-- |Parses the command line args.
 options :: [OptDescr Flag]
 options =
     [ Option ['v'] ["version"] (NoArg Version) "Displays version information"
@@ -82,125 +86,114 @@ options =
              "Pushes the given password to the clipboard"
     , Option ['p'] ["print"]   (ReqArg Print "PASS_NAME")
              "Prints the given password to stdout"
-    , Option ['s'] ["set"]     (OptArg parse_setopts "SET_OPTS")
+    , Option ['s'] ["set"]     (OptArg parseSetOpts "SET_OPTS")
                  "set a new password, require: (c)aps, (n)umbers, \
                   l(iteral) or (s)pecial chars"
-    , Option ['h'] ["h512"]    (ReqArg Hash "INPUT")
+    , Option ['h'] ["h512"]    (ReqArg Hash512 "INPUT")
                  "Hashes the input with a sha512"
-    , Option ['i'] ["h256"]    (ReqArg Init "INPUT")
+    , Option ['i'] ["h256"]    (ReqArg Hash256 "INPUT")
                  "Hashes the input with a sha256"
     , Option ['l'] ["load"]    (ReqArg Load "LOAD_OPT")
                  "How to load the new file: (o)verwrite or (m)erge"
     ]
 
--- Parses the options for setting a pass.
-parse_setopts :: Maybe String -> Flag
-parse_setopts = Set . fromMaybe ""
+-- |Parses the options for setting a pass.
+parseSetOpts :: Maybe String -> Flag
+parseSetOpts = Set . fromMaybe ""
 
--- Parses the options
-handle_flags :: ([Flag],[String],[String]) -> IO ()
-handle_flags ([],_,_)   = putStrLn "Usage: doorman [COMMAND]... [PARAM]..."
-handle_flags (fs,ss,es) = mapM_ (handle_flag ss) fs
+-- |Parses the options
+handleFlags :: ([Flag],[String],[String]) -> IO ()
+handleFlags ([],_,_)   = putStrLn "Usage: doorman [COMMAND]... [PARAM]..."
+handleFlags (fs,ss,es) = mapM_ (handleFlag ss) fs
   where
-      handle_flag _ Version     = putStrLn $ "doorman version "  ++ version_num
+      handleFlag _   Version    = putStrLn $ "doorman version "  ++ versionNum
                                   ++ "\nby Joe Jevnik"
-      handle_flag _ Help        = putStrLn help_msg
-      handle_flag ss (Recall p) = recall_params (length ss) ss False p
-      handle_flag ss (Print p)  = recall_params (length ss) ss True p
-      handle_flag ss (Set os)   = set_params    (length ss) ss os
-      handle_flag ss (Hash s)   = hash_str                  s True
-      handle_flag ss (Init s)   = hash_str                  s False
-      handle_flag ss (Load o)   = load_params   (length ss) ss o
-
-
--- --------------------------------------------------------------------------
--- dealing with PassTypes
-
-get_name :: PassType -> ByteString
-get_name (n,_,_,_) = n
-
-get_lit :: PassType -> Bool
-get_lit (_,l,_,_) = l
-
-get_len :: PassType -> Word8
-get_len (_,_,l,_) = l
-
-get_seed :: PassType -> ByteString
-get_seed (_,_,_,s) = s
-
-parse_len :: ByteString -> Word8
-parse_len str = fromIntegral . fst . fromMaybe (error "bad length in parse")
-            $ readInt str
+      handleFlag _   Help       = putStrLn helpMsg
+      handleFlag ss (Recall p)  = accumRecallParams (length ss) ss False p
+      handleFlag ss (Print p)   = accumRecallParams (length ss) ss True p
+      handleFlag ss (Set os)    = accumSetParams    (length ss) ss os
+      handleFlag ss (Hash512 s) = hashStr                        s True
+      handleFlag ss (Hash256 s) = hashStr                        s False
+      handleFlag ss (Load o)    = accumLoadParams   (length ss) ss o
 
 -- --------------------------------------------------------------------------
 -- File reading and parsing
 
--- Return the hash of the master password that is saved.
-get_master_hash :: IO ByteString
-get_master_hash = head . C.lines <$> B.readFile master_fl
+-- |Return the hash of the master password that is saved.
+getMasterHash :: IO ByteString
+getMasterHash = head . C.lines <$> B.readFile masterFl
 
-get_pass_lib :: ByteString -> IO ByteString
-get_pass_lib master_hash = xor_pass master_hash <$> B.readFile pass_lib
+getPassLib :: ByteString -> IO ByteString
+getPassLib masterHash = xorPass masterHash <$> B.readFile passLib
 
--- Parses a string for PassTypes. This function expects a valid String
--- that contains parse_passes printed in the format of the pass_lib file.
-parse_passes :: ByteString -> Map ByteString PassType
-parse_passes str = fromList [(get_name v,v) | v <- map read_pass $ C.lines str]
+-- |Parses a string for PasswordDatas. This function expects a valid String
+-- that contains parsePasses printed in the format of the passLib file.
+parsePasses :: ByteString -> Map ByteString PasswordData
+parsePasses str = fromList [(passName v,v) | v <- map read_pass $ C.lines str]
   where
       read_pass str
           = let p = C.split ':' str
-            in (head p,p!!1 /= "0",parse_len (p!!2),p!!3)
+            in PasswordData { passName = head p
+                            , isLit    = p!!1 /= "0"
+                            , passLen  = parseLen $ p!!2
+                            , passSeed = p!!3
+                            }
 
--- Filter Print: Filters out the list for any names that are the same as p,
---  and then formats the rest to be output to the file.
-fprint_passes :: PassType -> Map ByteString PassType -> ByteString
-fprint_passes p ps = bld "" $ p:(map snd $ toList $ delete (get_name p) ps)
+-- |Parses the length properly.
+parseLen :: ByteString -> Word8
+parseLen str = fromIntegral . fst . fromMaybe (error "bad length in parse")
+                $ readInt str
 
--- Filter Print: Filters out the list for any names that are the same as p,
---  and then formats the rest to be output to the file.
-print_passes :: Map ByteString PassType -> ByteString
-print_passes ps = bld "" $ map snd $ toList ps
+-- |Filter Print: Filters out the list for any names that are the same as p,
+-- and then formats the rest to be output to the file.
+fPrintPasses :: PasswordData -> Map ByteString PasswordData -> ByteString
+fPrintPasses p ps = bld "" $ p:(map snd $ toList $ delete (passName p) ps)
 
--- Builds the string to be printed (shared between fprint and print passes.
-bld :: ByteString -> [PassType] -> ByteString
+-- |Filter Print: Filters out the list for any names that are the same as p,
+-- and then formats the rest to be output to the file.
+printPasses :: Map ByteString PasswordData -> ByteString
+printPasses ps = bld "" $ map snd $ toList ps
+
+-- |Builds the string to be printed (shared between fprint and print passes.
+bld :: ByteString -> [PasswordData] -> ByteString
 bld str [] = str
-bld str (p:ps) = bld (((((get_name p `snoc` ':')
-                         `append` ((if get_lit p
+bld str (p:ps) = bld (((((passName p `snoc` ':')
+                         `append` ((if isLit p
                                       then '1'
                                       else '0') `cons`
-                                   (':' `cons` (C.pack $ show (get_len p))))
-                                      `snoc` ':') `append` get_seed p)
+                                   (':' `cons` (C.pack $ show (passLen p))))
+                                      `snoc` ':') `append` passSeed p)
                        `snoc` '\n') `append` str) ps
 
--- XORs the strings.
-xor_pass :: ByteString -> ByteString -> ByteString
-xor_pass pass str = B.pack $  zipWith xor
+-- |XORs the strings.
+xorPass :: ByteString -> ByteString -> ByteString
+xorPass pass str = B.pack $  zipWith xor
                    (cycle $ B.unpack pass) (B.unpack str)
 
--- Compares the hash of the input password to the saved hash of the master
+-- |Compares the hash of the input password to the saved hash of the master
 -- password.
-valid_pass :: ByteString -> ByteString -> Bool
-valid_pass pass hash = C.unpack hash == (showDigest $ sha256 pass)
+isValidPass :: ByteString -> ByteString -> Bool
+isValidPass pass hash = C.unpack hash == (showDigest $ sha256 pass)
 
--- Makes an end password from a master password and a seed.
-mk_pass :: ByteString -> ByteString -> String
-mk_pass master seed = let p1 = showDigest $ sha512 (master `append` seed)
+-- |Makes an end password from a master password and a seed.
+genPassword :: ByteString -> ByteString -> String
+genPassword master seed = let p1 = showDigest $ sha512 (master `append` seed)
                       in filter (`notElem` "\"'`")
                              $ scanl1 (\x y -> chr
                                        $ ((ord x * ord y) `rem` 93) + 33) p1
 
--- Error to throw if the password is wrong. This includes a 2 second delay.
-incpasswderr :: IO ()
-incpasswderr = threadDelay 2000000 >> error "Incorrect password"
+-- |Error to throw if the password is wrong. This includes a 2 second delay.
+incPasswordErr :: IO ()
+incPasswordErr = threadDelay 2000000 >> error "Incorrect password"
 
--- prints the string and then flushes the buffer.
-p_flush :: String -> IO ()
-p_flush str = putStr str >> hFlush stdout
+-- |prints the string and then flushes the buffer.
+pFlush :: String -> IO ()
+pFlush str = putStr str >> hFlush stdout
 
--- Prompts the user for their master password.
-prompt_mast :: IO String
-prompt_mast = do
-    p_flush "Master password: " >> hSetEcho stdout False
+-- |Prompts the user for their master password.
+promptMasterPass :: IO String
+promptMasterPass = do
+    pFlush "Master password: " >> hSetEcho stdout False
     str <- getLine
     hSetEcho stdout True >> putStrLn ""
     return str
@@ -210,57 +203,57 @@ prompt_mast = do
 -- These function check for the proper params to then pass on the their
 -- respective functions.
 
--- Accumulates all parameters for '-r' and '-p'.
-recall_params :: Int -> [String] -> Bool -> String -> IO ()
-recall_params ln as b p
+-- |Accumulates all parameters for '-r' and '-p'.
+accumRecallParams :: Int -> [String] -> Bool -> String -> IO ()
+accumRecallParams ln as b p
     | ln == 0 = do
-        pass <- prompt_mast
-        recall_pass (C.pack pass) b (C.pack p)
-    | otherwise = recall_pass (C.pack $ head as) b (C.pack p)
+        pass <- promptMasterPass
+        recallPass (C.pack pass) b (C.pack p)
+    | otherwise = recallPass (C.pack $ head as) b (C.pack p)
 
--- Accumulates all parameters for '-s'.
-set_params :: Int -> [String] -> String ->  IO ()
-set_params ln as os
+-- |Accumulates all parameters for '-s'.
+accumSetParams :: Int -> [String] -> String ->  IO ()
+accumSetParams ln as os
     | ln == 0 = do
-        name <- prompt_name
-        len  <- prompt_len
-        seed <- prompt_seed
-        pass <- prompt_mast
-        set_pass (map C.pack $ name:len:seed:[pass]) os
+        name <- promptName
+        len  <- promptLen
+        seed <- promptSeed
+        pass <- promptMasterPass
+        setPass (map C.pack $ name:len:seed:[pass]) os
     | ln == 1 = do
-        len  <- prompt_len
-        seed <- prompt_seed
-        pass <- prompt_mast
-        set_pass (map C.pack $ as ++ [len,seed,pass]) os
+        len  <- promptLen
+        seed <- promptSeed
+        pass <- promptMasterPass
+        setPass (map C.pack $ as ++ [len,seed,pass]) os
     | ln == 2 = do
-        seed <- prompt_seed
-        pass <- prompt_mast
-        set_pass (map C.pack $ as ++ [seed,pass]) os
+        seed <- promptSeed
+        pass <- promptMasterPass
+        setPass (map C.pack $ as ++ [seed,pass]) os
     | ln == 3 = do
-        pass <- prompt_mast
-        set_pass (map C.pack $ as ++ [pass]) os
-    | otherwise = set_pass (map C.pack as) os
+        pass <- promptMasterPass
+        setPass (map C.pack $ as ++ [pass]) os
+    | otherwise = setPass (map C.pack as) os
   where
-      prompt_name = p_flush "Password name: "   >> getLine
-      prompt_len  = p_flush "Password length: " >> getLine
-      prompt_seed = p_flush "Seed: "            >> getLine
+      promptName = pFlush "Password name: "   >> getLine
+      promptLen  = pFlush "Password length: " >> getLine
+      promptSeed = pFlush "Seed: "            >> getLine
 
--- Accumilates all parameters for '-l'.
-load_params :: Int -> [String] -> String -> IO ()
-load_params ls as opts
+-- |Accumilates all parameters for '-l'.
+accumLoadParams :: Int -> [String] -> String -> IO ()
+accumLoadParams ls as opts
     | ls == 0 = do
-        putStr "Path to new pass_lib: "
+        putStr "Path to new passLib: "
         nw <- getLine
-        pass <- prompt_mast
-        load_pass_lib (map C.pack [nw,pass]) opts
+        pass <- promptMasterPass
+        loadPassLib (map C.pack [nw,pass]) opts
     | ls == 1 = do
-        pass <- prompt_mast
-        load_pass_lib (map C.pack $ as ++ [pass]) opts
-    | otherwise = load_pass_lib (map C.pack as) opts
+        pass <- promptMasterPass
+        loadPassLib (map C.pack $ as ++ [pass]) opts
+    | otherwise = loadPassLib (map C.pack as) opts
 
--- Prints the help dialogue.
-help_msg :: String
-help_msg = "Commands:\n\
+-- |Prints the help dialogue.
+helpMsg :: String
+helpMsg = "Commands:\n\
   -r [NAME] [MASTER] - copies the password of NAME.\n\
   -p [NAME] [MASTER] - prints the password of NAME.\n\
   -s[OPTS] [NAME] [LENGTH] [SEED] [MASTER] - changes the seed for NAME.\n\
@@ -275,87 +268,90 @@ help_msg = "Commands:\n\
 -- --------------------------------------------------------------------------
 -- Functions that will be called after *_params has checked that it is safe
 
--- Recalls the given password. if b is True, then prints the password to
+-- |Recalls the given password. if b is True, then prints the password to
 -- stdout. If b is False, pushes the password to the clipboard. This function
 -- handles both '-r' and '-p'.
-recall_pass :: ByteString -> Bool -> ByteString -> IO ()
-recall_pass pass b name = do
-    master_hash <- get_master_hash
-    unless (valid_pass pass master_hash) incpasswderr
-    fl <- get_pass_lib master_hash
-    case lookup name (parse_passes fl) of
+recallPass :: ByteString -> Bool -> ByteString -> IO ()
+recallPass pass b name = do
+    masterHash <- getMasterHash
+    unless (isValidPass pass masterHash) incPasswordErr
+    fl <- getPassLib masterHash
+    case lookup name (parsePasses fl) of
         Nothing -> error "No password set for that name"
         Just p  -> if b
-                     then C.putStrLn $ B.take (fromIntegral $ get_len p)
-                              (if get_lit p
-                                 then get_seed p
-                                 else C.pack $ mk_pass pass (get_seed p))
+                     then C.putStrLn $ B.take (fromIntegral $ passLen p)
+                              (if isLit p
+                                 then passSeed p
+                                 else C.pack $ genPassword pass (passSeed p))
                      else void (system $ "echo \""
-                                ++ (C.unpack $ B.take (fromIntegral $ get_len p)
-                                         (if get_lit p
-                                            then get_seed p
-                                            else C.pack $ mk_pass pass
-                                                     (get_seed p)))
+                                ++ (C.unpack $ B.take (fromIntegral $ passLen p)
+                                         (if isLit p
+                                            then passSeed p
+                                            else C.pack $ genPassword pass
+                                                     (passSeed p)))
                                        ++ "\" | xclip -selection c")
 
--- Sets a password seed for a name. This function handles '-s'.
-set_pass :: [ByteString] -> String -> IO ()
-set_pass [name,len,seed,pass] opts = do
-    master_hash <- get_master_hash
-    unless (valid_pass pass master_hash) incpasswderr
-    fl <- get_pass_lib master_hash
-    unless (test_pass seed (sort opts) pass)
+-- |Sets a password seed for a name. This function handles '-s'.
+setPass :: [ByteString] -> String -> IO ()
+setPass [name,len,seed,pass] opts = do
+    masterHash <- getMasterHash
+    unless (isValidPass pass masterHash) incPasswordErr
+    fl <- getPassLib masterHash
+    unless (testPass seed (sort opts) pass)
                $ error "test failed, try another seed"
-    removeFile pass_lib
-    B.appendFile pass_lib $ xor_pass master_hash
-         $ fprint_passes (name,('l' `elem` opts),parse_len len,seed)
-         $ parse_passes fl
-    setFileMode pass_lib (unionFileModes ownerReadMode ownerWriteMode)
+    removeFile passLib
+    B.appendFile passLib $ xorPass masterHash
+         $ fPrintPasses PasswordData { passName = name
+                                     , isLit    = 'l' `elem` opts
+                                     , passLen  = parseLen len
+                                     , passSeed = seed
+                                     } $ parsePasses fl
+    setFileMode passLib (unionFileModes ownerReadMode ownerWriteMode)
   where
-      char_to_f ch
+      chToFunc ch
           | ch == 'c' = any isUpper
           | ch == 'n' = any isDigit
           | ch == 's' = any isSymbol
           | otherwise = const True
-      test_pass seed opts pass
+      testPass seed opts pass
           | any (`notElem` "clns") opts = error "options must be c, n, or s"
-          | otherwise = let ps = mk_pass pass seed
-                        in all (\ch -> char_to_f ch ps) opts
+          | otherwise = let ps = genPassword pass seed
+                        in all (\ch -> chToFunc ch ps) opts
 
 
---Allows the user to hash strings using sha512 and sha256.
+-- |Allows the user to hash strings using sha512 and sha256.
 -- This function handles '-i' and '-h'.
-hash_str :: String -> Bool -> IO ()
-hash_str pass b = putStrLn $ (if b
-                                then showDigest . sha512
-                                else showDigest . sha256) $ C.pack pass
-                  
---Alows the user to load and merge, or load an overwrite their password lib
+hashStr :: String -> Bool -> IO ()
+hashStr pass b = putStrLn $ (if b
+                                  then showDigest . sha512
+                                  else showDigest . sha256) $ C.pack pass
+
+-- |Alows the user to load and merge, or load an overwrite their password lib
 -- with a new password lib.
-load_pass_lib :: [ByteString] -> String -> IO ()
-load_pass_lib [new_lib,pass] opt
+loadPassLib :: [ByteString] -> String -> IO ()
+loadPassLib [newLib,pass] opt
     | opt == "m" = do
         dmid <- getEffectiveUserID
-        master_hash <- get_master_hash
-        unless (valid_pass pass master_hash) incpasswderr
-        fl <- get_pass_lib master_hash
+        masterHash <- getMasterHash
+        unless (isValidPass pass masterHash) incPasswordErr
+        fl <- getPassLib masterHash
         getRealUserID >>= setEffectiveUserID
-        new_fl <- xor_pass master_hash <$> B.readFile (C.unpack new_lib)
-        let new_pairs = difference (parse_passes new_fl) (parse_passes fl)
+        new_fl <- xorPass masterHash <$> B.readFile (C.unpack newLib)
+        let new_pairs = difference (parsePasses new_fl) (parsePasses fl)
         setEffectiveUserID dmid
-        removeFile pass_lib
-        B.appendFile pass_lib $ xor_pass master_hash
-             $ print_passes $ new_pairs
-        setFileMode pass_lib (unionFileModes ownerReadMode ownerWriteMode)
+        removeFile passLib
+        B.appendFile passLib $ xorPass masterHash
+             $ printPasses $ new_pairs
+        setFileMode passLib (unionFileModes ownerReadMode ownerWriteMode)
     | opt == "o" = do
-        master_hash <- get_master_hash
-        unless (valid_pass pass master_hash) incpasswderr
+        masterHash <- getMasterHash
+        unless (isValidPass pass masterHash) incPasswordErr
         dmid <- getEffectiveUserID
         getRealUserID >>= setEffectiveUserID
-        new_fl <- readFile (C.unpack new_lib)
-        removeFile pass_lib
-        appendFile pass_lib new_fl
-        setFileMode pass_lib (unionFileModes ownerReadMode ownerWriteMode)
+        newFl <- readFile (C.unpack newLib)
+        removeFile passLib
+        appendFile passLib newFl
+        setFileMode passLib (unionFileModes ownerReadMode ownerWriteMode)
     | otherwise = do
         error $ "Invalid option: '" ++ opt ++ "': expected 'm' for merge or 'o'\
 for overwrite"
