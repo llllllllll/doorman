@@ -19,6 +19,12 @@ import Control.Applicative                       ((<$>))
 import Control.Concurrent                        (threadDelay)
 import Control.Monad                             (unless,void)
 import Data.Bits                                 (xor)
+import Data.ByteString.Lazy                      (ByteString,append,singleton)
+import qualified Data.ByteString.Lazy as B       ( readFile,head
+                                                 , unpack,pack,take,appendFile )
+import Data.ByteString.Lazy.Char8                (cons,snoc,readInt)
+import qualified Data.ByteString.Lazy.Char8 as C ( pack,unpack,putStrLn
+                                                 , lines,split )
 import Data.Char                                 ( chr,ord,isUpper
                                                  , isDigit,isSymbol )
 import Data.Digest.Pure.SHA                      (sha256,sha512,showDigest)
@@ -27,12 +33,6 @@ import Data.Map                                  ( Map,delete,insert,difference
                                                  , toList,fromList,lookup)
 import Data.Maybe                                (fromMaybe)
 import Data.Word                                 (Word8)
-import Data.ByteString.Lazy                      (ByteString,append,singleton)
-import qualified Data.ByteString.Lazy as B       ( readFile,head
-                                                 , unpack,pack,take,appendFile )
-import Data.ByteString.Lazy.Char8                (cons,snoc,readInt)
-import qualified Data.ByteString.Lazy.Char8 as C ( pack,unpack,putStrLn
-                                                 , lines,split )
 import System.Console.GetOpt                     ( ArgOrder(..),OptDescr(..)
                                                  , ArgDescr(..),getOpt)
 import System.Directory                          (removeFile)
@@ -83,7 +83,7 @@ options =
     [ Option ['v'] ["version"] (NoArg Version) "Displays version information"
     , Option ['H'] ["help"]    (NoArg Help) "Prints the help dialog"
     , Option ['r'] ["recall"]  (ReqArg Recall "PASS_NAME")
-             "Pushes the given password to the clipboard"
+                 "Pushes the given password to the clipboard"
     , Option ['p'] ["print"]   (ReqArg Print "PASS_NAME")
              "Prints the given password to stdout"
     , Option ['s'] ["set"]     (OptArg parseSetOpts "SET_OPTS")
@@ -131,18 +131,17 @@ getPassLib masterHash = xorPass masterHash <$> B.readFile passLib
 parsePasses :: ByteString -> Map ByteString PasswordData
 parsePasses str = fromList [(passName v,v) | v <- map read_pass $ C.lines str]
   where
-      read_pass str
-          = let p = C.split ':' str
-            in PasswordData { passName = head p
-                            , isLit    = p!!1 /= "0"
-                            , passLen  = parseLen $ p!!2
-                            , passSeed = p!!3
-                            }
+      read_pass str = let p = C.split ':' str
+                      in PasswordData { passName = head p
+                                      , isLit    = p!!1 /= "0"
+                                      , passLen  = parseLen $ p!!2
+                                      , passSeed = p!!3
+                                      }
 
 -- |Parses the length properly.
 parseLen :: ByteString -> Word8
 parseLen str = fromIntegral . fst . fromMaybe (error "bad length in parse")
-                $ readInt str
+               $ readInt str
 
 -- |Filter Print: Filters out the list for any names that are the same as p,
 -- and then formats the rest to be output to the file.
@@ -167,8 +166,7 @@ bld str (p:ps) = bld (((((passName p `snoc` ':')
 
 -- |XORs the strings.
 xorPass :: ByteString -> ByteString -> ByteString
-xorPass pass str = B.pack $  zipWith xor
-                   (cycle $ B.unpack pass) (B.unpack str)
+xorPass pass str = B.pack $ zipWith xor (cycle $ B.unpack pass) (B.unpack str)
 
 -- |Compares the hash of the input password to the saved hash of the master
 -- password.
@@ -178,9 +176,9 @@ isValidPass pass hash = C.unpack hash == (showDigest $ sha256 pass)
 -- |Makes an end password from a master password and a seed.
 genPassword :: ByteString -> ByteString -> String
 genPassword master seed = let p1 = showDigest $ sha512 (master `append` seed)
-                      in filter (`notElem` "\"'`")
-                             $ scanl1 (\x y -> chr
-                                       $ ((ord x * ord y) `rem` 93) + 33) p1
+                          in filter (`notElem` "\"'`")
+                                 $ scanl1 (\x y -> chr
+                                           $ ((ord x * ord y) `rem` 93) + 33) p1
 
 -- |Error to throw if the password is wrong. This includes a 2 second delay.
 incPasswordErr :: IO ()
@@ -323,8 +321,8 @@ setPass [name,len,seed,pass] opts = do
 -- This function handles '-i' and '-h'.
 hashStr :: String -> Bool -> IO ()
 hashStr pass b = putStrLn $ (if b
-                                  then showDigest . sha512
-                                  else showDigest . sha256) $ C.pack pass
+                               then showDigest . sha512
+                               else showDigest . sha256) $ C.pack pass
 
 -- |Alows the user to load and merge, or load an overwrite their password lib
 -- with a new password lib.
