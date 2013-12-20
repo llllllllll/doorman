@@ -63,7 +63,7 @@ data Flag = Version | Help | Recall String | Print String
 -- constants and files.
 
 passLib :: FilePath
-passLib = "/usr/share/doorman/passLib"
+passLib = "/usr/share/doorman/pass_lib"
 
 masterFl :: FilePath
 masterFl = "/usr/share/doorman/master"
@@ -155,14 +155,13 @@ printPasses ps = bld "" $ map snd $ toList ps
 
 -- |Builds the string to be printed (shared between fprint and print passes.
 bld :: ByteString -> [PasswordData] -> ByteString
-bld str [] = str
-bld str (p:ps) = bld (((((passName p `snoc` ':')
-                         `append` ((if isLit p
-                                      then '1'
-                                      else '0') `cons`
-                                   (':' `cons` (C.pack $ show (passLen p))))
-                                      `snoc` ':') `append` passSeed p)
-                       `snoc` '\n') `append` str) ps
+bld str = foldr (\p ps -> (((((passName p `snoc` ':')
+                             `append` ((if isLit p
+                                          then '1'
+                                          else '0') `cons`
+                                       (':' `cons` (C.pack $ show (passLen p))))
+                                          `snoc` ':') `append` passSeed p)
+                           `snoc` '\n') `append` ps)) str
 
 -- |XORs the strings.
 xorPass :: ByteString -> ByteString -> ByteString
