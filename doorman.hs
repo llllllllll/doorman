@@ -1,6 +1,6 @@
 -----------------------------------------------------------------------------
 -- |
--- Program     :  doorman v3.0.1
+-- Module      :  Main
 -- Copyright   :  Joe Jevnik 2.12.2013
 -- License     :  GPL v2
 --
@@ -12,7 +12,7 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE CPP,OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 import Prelude                            hiding (lookup)
 import Control.Applicative                       ((<$>))
@@ -21,43 +21,55 @@ import Control.Monad                             (unless,void)
 import Data.Bits                                 (xor)
 import Data.ByteString.Lazy                      (ByteString,append,singleton)
 import qualified Data.ByteString.Lazy as B       ( readFile,head
-                                                 , unpack,pack,take,appendFile )
+                                                 , unpack,pack,take,appendFile
+                                                 )
 import Data.ByteString.Lazy.Char8                (cons,snoc,readInt)
 import qualified Data.ByteString.Lazy.Char8 as C ( pack,unpack,putStrLn
                                                  , lines,split )
 import Data.Char                                 ( chr,ord,isUpper
-                                                 , isDigit,isSymbol )
+                                                 , isDigit,isSymbol
+                                                 )
 import Data.Digest.Pure.SHA                      (sha256,sha512,showDigest)
 import Data.List                                 (sort)
 import Data.Map                                  ( Map,delete,insert,difference
-                                                 , toList,fromList,lookup)
+                                                 , toList,fromList,lookup
+                                                 )
 import Data.Maybe                                (fromMaybe)
 import Data.Word                                 (Word8)
 import System.Console.GetOpt                     ( ArgOrder(..),OptDescr(..)
-                                                 , ArgDescr(..),getOpt)
+                                                 , ArgDescr(..),getOpt
+                                                 , usageInfo
+                                                 )
 import System.Directory                          (removeFile)
 import System.Environment                        (getArgs)
 import System.IO                                 (hSetEcho,stdin,stdout,hFlush)
 import System.Process                            (system)
 import System.Posix.Files                        ( unionFileModes,ownerReadMode
-                                                 , ownerWriteMode,setFileMode)
+                                                 , ownerWriteMode,setFileMode
+                                                 )
 import System.Posix.User                         ( getRealUserID
                                                  , getEffectiveUserID
-                                                 , setEffectiveUserID)
+                                                 , setEffectiveUserID
+                                                 )
 
--- --------------------------------------------------------------------------
--- data types
 
+-- -------------------------------------------------------------------------
 -- | The type for a lookup key / password pair.
 data PasswordData = PasswordData { passName :: ByteString
-                                 , isLit    :: Bool
-                                 , passLen  :: Word8
+                                 , isLit :: Bool
+                                 , passLen :: Word8
                                  , passSeed :: ByteString
                                  }
 
 -- | The possible flags that can be passed, and their data.
-data Flag = Version | Help | Recall String | Print String
-          | Set String | Hash512 String | Hash256 String | Load String
+data Flag = Version
+          | Help
+          | Recall String
+          | Print String
+          | Set String
+          | Hash512 String
+          | Hash256 String
+          | Load String
 
 -- --------------------------------------------------------------------------
 -- constants and files.
@@ -69,7 +81,7 @@ masterFl :: FilePath
 masterFl = "/usr/share/doorman/master"
 
 versionNum :: String
-versionNum = "3.0.1"
+versionNum = "3.0.2"
 
 -- --------------------------------------------------------------------------
 -- Main / arg handling cases.
@@ -87,8 +99,8 @@ options =
     , Option ['p'] ["print"]   (ReqArg Print "PASS_NAME")
              "Prints the given password to stdout"
     , Option ['s'] ["set"]     (OptArg parseSetOpts "SET_OPTS")
-                 "set a new password, require: (c)aps, (n)umbers, \
-                  l(iteral) or (s)pecial chars"
+                 "Set a new password, require: (c)aps, (n)umbers, \
+                 \l(iteral) or (s)pecial chars"
     , Option ['h'] ["h512"]    (ReqArg Hash512 "INPUT")
                  "Hashes the input with a sha512"
     , Option ['i'] ["h256"]    (ReqArg Hash256 "INPUT")
@@ -106,8 +118,7 @@ handleFlags :: ([Flag],[String],[String]) -> IO ()
 handleFlags ([],_,_)   = putStrLn "Usage: doorman [COMMAND]... [PARAM]..."
 handleFlags (fs,ss,es) = mapM_ (handleFlag ss) fs
   where
-      handleFlag _   Version    = putStrLn $ "doorman version "  ++ versionNum
-                                  ++ "\nby Joe Jevnik"
+      handleFlag _   Version    = putStrLn versionMsg
       handleFlag _   Help       = putStrLn helpMsg
       handleFlag ss (Recall p)  = accumRecallParams (length ss) ss False p
       handleFlag ss (Print p)   = accumRecallParams (length ss) ss True p
@@ -179,7 +190,7 @@ genPassword master seed = let p1 = showDigest $ sha512 (master `append` seed)
                                  $ scanl1 (\x y -> chr
                                            $ ((ord x * ord y) `rem` 93) + 33) p1
 
--- | Error to throw if the password is wrong. This includes a 2 second delay.
+-- | Error to throw if the password is wrong. This includes a 1 second delay.
 incPasswordErr :: IO ()
 incPasswordErr = threadDelay 1000000 >> error "Incorrect password"
 
@@ -253,19 +264,18 @@ accumLoadParams 1 as opts = do
     loadPassLib (map C.pack $ as ++ [pass]) opts
 accumLoadParams _ as opts = loadPassLib (map C.pack as) opts
 
--- | Prints the help dialogue.
+-- | The help dialogue.
 helpMsg :: String
-helpMsg = "Usage:\n\n    doorman [COMMAND]... [PARAM]...\n\nCommands:\n\
-  -r [NAME] [MASTER] - copies the password of NAME.\n\
-  -p [NAME] [MASTER] - prints the password of NAME.\n\
-  -s[OPTS] [NAME] [LENGTH] [SEED] [MASTER] - changes the seed for NAME.\n\
-  -h [INPUT] - hashes INPUT with a sha512.\n\
-  -i [INPUT] - hashes INPUT with a sha256.\n\
-  -l [m | o] [PATHTONEWFILE] [MASTER] - merges or overwrites the \n\
-    password library with the new file provided. Merging uses\n\
-    the new file's seeds in the case of a collision.\n\
-  -v --version - prints version information.\n\
-  -H --help - prints this message."
+helpMsg = "Usage:\n" ++ usageInfo "" options
+
+-- | The version dialogue.
+versionMsg :: String
+versionMsg =
+    "doorman " ++ versionNum ++ ": free password manager.\n\
+    \Copyright (C) 2014 Joe Jevnik.\n\
+    \This is free software; see the source for copying \
+    \conditions.  There is NO\nwarranty; not even for MERCHANTABILITY\
+    \ or FITNESS FOR A PARTICULAR PURPOSE."
 
 -- --------------------------------------------------------------------------
 -- Functions that will be called after *_params has checked that it is safe

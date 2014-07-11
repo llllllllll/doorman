@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # Joe Jevnik
-# 29.9.2013
 # Sets up the system to be able to use doorman.
 # Requires root priveleges. - Usage: # ./setup {install | uninstall}
 
@@ -68,9 +67,9 @@ if [ "$1" = "install" ];then
     echo "Setting up permissions..."
     chown -R doorman /usr/share/doorman
     chmod 600 /usr/share/doorman/pass_lib
-    cp doorman /usr/bin/doorman
-    chown doorman /usr/bin/doorman
-    chmod +s /usr/bin/doorman
+    cp doorman $HOME/bin/
+    chown doorman $HOME/bin/
+    chmod +s $HOME/bin/
 
     doorman -i $passa > /usr/share/doorman/master
     chmod 400 /usr/share/doorman/master
@@ -81,13 +80,14 @@ if [ "$1" = "install" ];then
 	echo "Uninstalling doorman..."
 	echo "removing binaries..."
 
-        rm /usr/bin/doorman
+        rm $HOME/bin/
 
 	echo "Removing doorman user..."
         userdel doorman
-        echo "Would you like to remove the master hash and password seeds? (y/N):"
+        echo "Would you like to remove the master hash and password seeds?"
         echo "If you choose to save them, ownership will be transfered to root."
         echo "WARNING: after these are removed the passwords will be unrecoverable."
+        echo "remove? (y/N):"
 
         read res;
         if [ "$res" = "y" ] || [ "$res" = "Y" ];then
