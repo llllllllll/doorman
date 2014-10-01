@@ -68,8 +68,8 @@ if [ "$1" = "install" ];then
     chown -R doorman /usr/share/doorman
     chmod 600 /usr/share/doorman/pass_lib
     cp doorman $HOME/bin/
-    chown doorman $HOME/bin/
-    chmod +s $HOME/bin/
+    chown doorman $HOME/bin/doorman
+    chmod +s $HOME/bin/doorman
 
     doorman -i $passa > /usr/share/doorman/master
     chmod 400 /usr/share/doorman/master
