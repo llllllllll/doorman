@@ -66,10 +66,71 @@ data Flag = Version
           | Help
           | Recall String
           | Print String
-          | Set String
+          | Set [SetOption]
+          | Generate [SetOption]
           | Hash512 String
           | Hash256 String
           | Load String
+
+
+-- | The options to set.
+data SetOption = HasCapital
+               | HasNumber
+               | HasSpecial
+               | NoCapital
+               | NoNumber
+               | NoSpecial
+               | Literal
+               | InvalidSetOption
+                 deriving (Eq)
+
+instance Show SetOption where
+    show HasCapital       = "c"
+    show HasNumber        = "n"
+    show HasSpecial       = "s"
+    show NoCapital        = "C"
+    show NoNumber         = "N"
+    show NoSpecial        = "S"
+    show Literal          = "l"
+    show InvalidSetOption = ""
+
+
+-- | A string representing all valid options.
+setOptions :: String
+setOptions = "cCnNsSl"
+
+
+testSetOption :: SetOption -> String -> Maybe String
+testSetOption HasCapital       cs = if any isUpper cs
+                                       then Just cs
+                                       else Nothing
+testSetOption HasNumber        cs = if any isDigit cs
+                                       then Just cs
+                                       else Nothing
+testSetOption HasSpecial       cs = if any isSymbol cs
+                                       then Just cs
+                                       else Nothing
+testSetOption NoCapital        cs = Just $ bfill isUpper  cs
+testSetOption NoNumber         cs = Just $ bfill isDigit  cs
+testSetOption NoSpecial        cs = Just $ bfill isSymbol cs
+testSetOption InvalidSetOption cs = Just cs
+
+
+-- | Backword fill any char that matches f.
+-- If the last char matches, it starts filling with 'a'.
+bfill :: (Char -> Bool) -> String -> String
+bfill _ "" = ""
+bfill f cs = init $ foldr (\a ds@(c:_) -> (if f a then c else a) : ds) "a" cs
+
+
+-- | The options to load
+data LoadOption = Merge
+                | Overwrite
+
+
+instance Show LoadOption where
+    show Merge     = "m"
+    show Overwrite = "o"
 
 -- --------------------------------------------------------------------------
 -- constants and files.
@@ -81,7 +142,7 @@ masterFl :: FilePath
 masterFl = "/usr/share/doorman/master"
 
 versionNum :: String
-versionNum = "3.0.2"
+versionNum = "3.1.0"
 
 -- --------------------------------------------------------------------------
 -- Main / arg handling cases.
@@ -94,24 +155,37 @@ options :: [OptDescr Flag]
 options =
     [ Option ['v'] ["version"] (NoArg Version) "Displays version information"
     , Option ['H'] ["help"]    (NoArg Help) "Prints the help dialog"
-    , Option ['r'] ["recall"]  (ReqArg Recall "PASS_NAME")
+    , Option ['r'] ["recall"]  (ReqArg Recall "PASS-NAME")
                  "Pushes the given password to the clipboard"
-    , Option ['p'] ["print"]   (ReqArg Print "PASS_NAME")
+    , Option ['p'] ["print"]   (ReqArg Print "PASS-NAME")
              "Prints the given password to stdout"
-    , Option ['s'] ["set"]     (OptArg parseSetOpts "SET_OPTS")
+    , Option ['s'] ["set"]     (OptArg (parseSetOpts Set) "SET-OPTS")
                  "Set a new password, require: (c)aps, (n)umbers, \
-                 \l(iteral) or (s)pecial chars"
+                 \l(iteral) or (s)pecial chars."
+    , Option ['g'] ["gen"]     (OptArg (parseSetOpts Generate) "SET-OPTS")
+                 "Generate a new password but do not save it."
     , Option ['h'] ["h512"]    (ReqArg Hash512 "INPUT")
                  "Hashes the input with a sha512"
     , Option ['i'] ["h256"]    (ReqArg Hash256 "INPUT")
                  "Hashes the input with a sha256"
-    , Option ['l'] ["load"]    (ReqArg Load "LOAD_OPT")
+    , Option ['l'] ["load"]    (ReqArg Load "LOAD-OPT")
                  "How to load the new file: (o)verwrite or (m)erge"
     ]
 
+
 -- | Parses the options for setting a pass.
-parseSetOpts :: Maybe String -> Flag
-parseSetOpts = Set . fromMaybe ""
+parseSetOpts :: ([SetOption] -> Flag) -> Maybe String -> Flag
+parseSetOpts f = f . map parseSetOpt . fromMaybe ""
+  where
+      parseSetOpt 'c' = HasCapital
+      parseSetOpt 'n' = HasNumber
+      parseSetOpt 's' = HasSpecial
+      parseSetOpt 'C' = NoCapital
+      parseSetOpt 'N' = NoNumber
+      parseSetOpt 'S' = NoSpecial
+      parseSetOpt 'l' = Literal
+      parseSetOpt _   = InvalidSetOption
+
 
 -- | Parses the options
 handleFlags :: ([Flag],[String],[String]) -> IO ()
@@ -122,10 +196,21 @@ handleFlags (fs,ss,es) = mapM_ (handleFlag ss) fs
       handleFlag _   Help       = putStrLn helpMsg
       handleFlag ss (Recall p)  = accumRecallParams (length ss) ss False p
       handleFlag ss (Print p)   = accumRecallParams (length ss) ss True p
-      handleFlag ss (Set os)    = accumSetParams    (length ss) ss os
       handleFlag ss (Hash512 s) = hashStr                        s True
       handleFlag ss (Hash256 s) = hashStr                        s False
-      handleFlag ss (Load o)    = accumLoadParams   (length ss) ss o
+      handleFlag ss (Load o)    = parseLoadOpt o
+                                  >>= accumLoadParams (length ss) ss
+      handleFlag ss (Set os)
+          | InvalidSetOption `elem` os = error
+                                         $ "set options must be " ++ setOptions
+          | otherwise                  = accumSetParams (length ss) ss os
+      handleFlag ss (Generate os)
+          | InvalidSetOption `elem` os = error
+                                         $ "gen options must be " ++ setOptions
+          | otherwise                  = accumGenParams (length ss) ss os
+      parseLoadOpt "m" = return Merge
+      parseLoadOpt "o" = return Overwrite
+      parseLoadOpt _   = error "LOAD-OPT must be 'm' or 'o'"
 
 -- --------------------------------------------------------------------------
 -- File reading and parsing
@@ -134,8 +219,10 @@ handleFlags (fs,ss,es) = mapM_ (handleFlag ss) fs
 getMasterHash :: IO ByteString
 getMasterHash = head . C.lines <$> B.readFile masterFl
 
+
 getPassLib :: ByteString -> IO ByteString
 getPassLib masterHash = xorPass masterHash <$> B.readFile passLib
+
 
 -- | Parses a string for PasswordDatas. This function expects a valid String
 -- that contains parsePasses printed in the format of the passLib file.
@@ -150,19 +237,22 @@ parsePasses str = fromList [(passName v,v) | v <- map readPass $ C.lines str]
                                      }
 
 -- | Parses the length properly.
-parseLen :: ByteString -> Word8
+parseLen :: Integral a => ByteString -> a
 parseLen = fromIntegral . fst . fromMaybe (error "bad length in parse")
            . readInt
+
 
 -- | Filter Print: Filters out the list for any names that are the same as p,
 -- and then formats the rest to be output to the file.
 fPrintPasses :: PasswordData -> Map ByteString PasswordData -> ByteString
 fPrintPasses p ps = bld "" $ p:(map snd $ toList $ delete (passName p) ps)
 
+
 -- | Filter Print: Filters out the list for any names that are the same as p,
 -- and then formats the rest to be output to the file.
 printPasses :: Map ByteString PasswordData -> ByteString
 printPasses = bld "" . map snd . toList
+
 
 -- | Builds the string to be printed (shared between fprint and print passes.
 bld :: ByteString -> [PasswordData] -> ByteString
@@ -174,14 +264,22 @@ bld = foldr (\p ps -> (((((passName p `snoc` ':')
                                        `snoc` ':') `append` passSeed p)
                         `snoc` '\n') `append` ps))
 
+
+-- | Applies all the set options functions.
+applyOptions :: [SetOption] -> String -> Maybe String
+applyOptions os ps = foldl (>>=) (Just ps) (map testSetOption os)
+
+
 -- | XORs the strings.
 xorPass :: ByteString -> ByteString -> ByteString
 xorPass pass str = B.pack $ zipWith xor (cycle $ B.unpack pass) (B.unpack str)
+
 
 -- | Compares the hash of the input password to the saved hash of the master
 -- password.
 isValidPass :: ByteString -> ByteString -> Bool
 isValidPass pass hash = C.unpack hash == (showDigest $ sha256 pass)
+
 
 -- | Makes an end password from a master password and a seed.
 genPassword :: ByteString -> ByteString -> String
@@ -190,13 +288,16 @@ genPassword master seed = let p1 = showDigest $ sha512 (master `append` seed)
                                  $ scanl1 (\x y -> chr
                                            $ ((ord x * ord y) `rem` 93) + 33) p1
 
+
 -- | Error to throw if the password is wrong. This includes a 1 second delay.
 incPasswordErr :: IO ()
 incPasswordErr = threadDelay 1000000 >> error "Incorrect password"
 
+
 -- | prints the string and then flushes the buffer.
 pFlush :: String -> IO ()
 pFlush str = putStr str >> hFlush stdout
+
 
 -- | Prompts the user for their master password.
 promptMasterPass :: IO String
@@ -206,13 +307,16 @@ promptMasterPass = do
     hSetEcho stdout True >> putStrLn ""
     return str
 
+
 -- | Prompts the user to input the password.
 promptName :: IO String
 promptName = pFlush "Password name: " >> getLine
 
+
 -- | Prompts the user to input the length of the password.
 promptLen :: IO String
 promptLen = pFlush "Password length: " >> getLine
+
 
 -- | Prompts the user to input the seed for the password.
 promptSeed :: IO String
@@ -230,8 +334,9 @@ accumRecallParams 0 as b p = do
     recallPass (C.pack pass) b (C.pack p)
 accumRecallParams _ as b p = recallPass (C.pack $ head as) b (C.pack p)
 
+
 -- | Accumulates all parameters for '-s'.
-accumSetParams :: Int -> [String] -> String ->  IO ()
+accumSetParams :: Int -> [String] -> [SetOption] -> IO ()
 accumSetParams 0 as os = do
     name <- promptName
     len  <- promptLen
@@ -252,21 +357,41 @@ accumSetParams 3 as os = do
     setPass (map C.pack $ as ++ [pass]) os
 accumSetParams _ as os = setPass (map C.pack as) os
 
+
+-- | Accumulates all the parameters for '-g'.
+accumGenParams :: Int -> [String] -> [SetOption] -> IO ()
+accumGenParams 0 as os = do
+    len  <- promptLen
+    seed <- promptSeed
+    pass <- promptMasterPass
+    genPass (map C.pack $ len:seed:[pass]) os
+accumGenParams 1 as os = do
+    seed <- promptSeed
+    pass <- promptMasterPass
+    genPass (map C.pack $ as ++ [seed,pass]) os
+accumGenParams 2 as os = do
+    pass <- promptMasterPass
+    genPass (map C.pack $ as ++ [pass]) os
+accumGenParams _ as os = genPass (map C.pack as) os
+
+
 -- | Accumilates all parameters for '-l'.
-accumLoadParams :: Int -> [String] -> String -> IO ()
-accumLoadParams 0 as opts = do
+accumLoadParams :: Int -> [String] -> LoadOption -> IO ()
+accumLoadParams 0 as opt = do
     putStr "Path to new passLib: "
     nw <- getLine
     pass <- promptMasterPass
-    loadPassLib (map C.pack [nw,pass]) opts
-accumLoadParams 1 as opts = do
+    loadPassLib (map C.pack [nw,pass]) opt
+accumLoadParams 1 as opt = do
     pass <- promptMasterPass
-    loadPassLib (map C.pack $ as ++ [pass]) opts
-accumLoadParams _ as opts = loadPassLib (map C.pack as) opts
+    loadPassLib (map C.pack $ as ++ [pass]) opt
+accumLoadParams _ as opt = loadPassLib (map C.pack as) opt
+
 
 -- | The help dialogue.
 helpMsg :: String
 helpMsg = "Usage:\n" ++ usageInfo "" options
+
 
 -- | The version dialogue.
 versionMsg :: String
@@ -303,31 +428,37 @@ recallPass pass b name = do
                                                      (passSeed p)))
                                        ++ "\" | xclip -selection c")
 
+
 -- | Sets a password seed for a name. This function handles '-s'.
-setPass :: [ByteString] -> String -> IO ()
+setPass :: [ByteString] -> [SetOption] -> IO ()
 setPass [name,len,seed,pass] opts = do
     masterHash <- getMasterHash
     unless (isValidPass pass masterHash) incPasswordErr
     fl <- getPassLib masterHash
-    unless (testPass seed (sort opts) pass)
-               $ error "test failed, try another seed"
-    removeFile passLib
-    B.appendFile passLib $ xorPass masterHash
-         $ fPrintPasses PasswordData { passName = name
-                                     , isLit    = 'l' `elem` opts
-                                     , passLen  = parseLen len
-                                     , passSeed = seed
-                                     } $ parsePasses fl
-    setFileMode passLib (unionFileModes ownerReadMode ownerWriteMode)
-  where
-      chToFunc 'c' = any isUpper
-      chToFunc 'n' = any isDigit
-      chToFunc 's' = any isSymbol
-      chToFunc ch  = const True
-      testPass seed opts pass
-          | any (`notElem` "clns") opts = error "options must be c, n, or s"
-          | otherwise = let ps = genPassword pass seed
-                        in all (\ch -> chToFunc ch ps) opts
+    case applyOptions opts (genPassword pass seed) of
+        Nothing -> error "Test Failed, try another seed."
+        Just ps -> do
+            removeFile passLib
+            B.appendFile passLib $ xorPass masterHash
+                 $ fPrintPasses PasswordData { passName = name
+                                             , isLit    = Literal `elem` opts
+                                             , passLen  = parseLen len
+                                             , passSeed = seed
+                                             } $ parsePasses fl
+            setFileMode passLib (unionFileModes ownerReadMode ownerWriteMode)
+
+
+-- | Generates a password. This function handles '-g'.
+genPass :: [ByteString] -> [SetOption] -> IO ()
+genPass [len,seed,pass] opts = do
+    masterHash <- getMasterHash
+    unless (isValidPass pass masterHash) incPasswordErr
+    fl <- getPassLib masterHash
+    case applyOptions opts (genPassword pass seed) of
+        Nothing -> error "Test Failed, try another seed."
+        Just ps -> if Literal `elem` opts
+                     then putStrLn $ take (parseLen len) ps
+                     else putStrLn $ take (parseLen len) ps
 
 
 -- | Allows the user to hash strings using sha512 and sha256.
@@ -337,10 +468,11 @@ hashStr pass b = putStrLn $ (if b
                                then showDigest . sha512
                                else showDigest . sha256) $ C.pack pass
 
+
 -- | Allows the user to load and merge, or load an overwrite their password lib
 -- with a new password lib.
-loadPassLib ::[ByteString] -> String -> IO ()
-loadPassLib [newLib,pass] "m" = do
+loadPassLib ::[ByteString] -> LoadOption -> IO ()
+loadPassLib [newLib,pass] Merge = do
     dmid <- getEffectiveUserID
     masterHash <- getMasterHash
     unless (isValidPass pass masterHash) incPasswordErr
@@ -352,7 +484,7 @@ loadPassLib [newLib,pass] "m" = do
     removeFile passLib
     B.appendFile passLib $ xorPass masterHash $ printPasses $ newPairs
     setFileMode passLib (unionFileModes ownerReadMode ownerWriteMode)
-loadPassLib [newLib,pass] "o" = do
+loadPassLib [newLib,pass] Overwrite = do
     masterHash <- getMasterHash
     unless (isValidPass pass masterHash) incPasswordErr
     dmid <- getEffectiveUserID
@@ -361,5 +493,3 @@ loadPassLib [newLib,pass] "o" = do
     removeFile passLib
     appendFile passLib newFl
     setFileMode passLib (unionFileModes ownerReadMode ownerWriteMode)
-loadPassLib _ opt = error $ "Invalid option: '" ++ opt
-                    ++ "': expected 'm' for merge or 'o' for overwrite"
